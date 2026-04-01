@@ -1,0 +1,63 @@
+def agentName = "prod-agent2" // Replace with your agent label
+def pscommand = ""
+pipeline {
+
+    agent {
+        label "${agentName}"
+    }
+
+    parameters {
+        string(name: "DeviceName", defaultValue: "", description: "Please enter the Device Name")
+        string(name: "EntraIDGroupName", defaultValue: "", description: "Please enter the EntraID Group Name")
+    }
+
+    environment {  
+        VDI_BUILD_LOCATION_CE1 = "CE1"
+        DeviceName = "${params.DeviceName}"
+        EntraIDGroupName = "${params.EntraIDGroupName}"
+    }
+
+    stages {
+
+        stage("Read Config and Intialize the environment variables") {
+            steps {
+                dir("configs") {
+                    script {
+
+                        def imagesettings_CE1 = readJSON file: "${VDI_BUILD_LOCATION_CE1}-STD.json"
+
+                        // rg related related info
+                        env.ARM_TENANT_ID = "${imagesettings_CE1.ARM_TENANT_ID}"
+                        env.ARM_CLIENT_ID = "${imagesettings_CE1.ARM_CLIENT_ID}"
+
+                    }
+                }
+            }
+        }
+        stage("Add Machine to EntraID Group") {
+
+            steps {
+                script {
+
+                    withCredentials([string(credentialsId: 'PROD-CLIENT-SECRET', variable: 'clientSecret')]) {
+
+                        dir("Powershell") {
+                            
+                            echo "Running AddDevicetoEntraGroup.ps1"
+                            pscommand = " ./AddDevicetoEntraGroup.ps1 -tenantId ${env:ARM_TENANT_ID} -clientId ${env:ARM_CLIENT_ID} -DeviceGroupName ${env.EntraIDGroupName} -DeviceName ${env.DeviceName}"
+                            def output = powershell(returnStdout: true, script: pscommand).trim()
+                        }
+                    }
+
+                    echo "Add Machine to EntraID Group completed successfully"
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            deleteDir()
+        }
+    }    
+}

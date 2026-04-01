@@ -1,0 +1,11 @@
+{
+    "IATClient_CatalogName": "2_TEST_AVCPACKAGINGAO_CE1IAT",
+    "iatclient_resourcegroup_name": "rgp-p-gwc1-avcapmao-uatclients",
+    "Dev_CustomerId": "q6nou2gd9o5n",
+    "vm_tenantid_Ce1_infra_terraform" : "6e06e42d-6925-47c6-b9e7-9581c7ca302a",
+    "packaging_subscriptionid": "d2547ae8-ac44-4636-a2db-d2e6e9ecb98d",
+    "vm_clientid_Ce1_infra_terraform" : "abf156f8-3f06-419e-8e51-1ef6b6d25fcf",
+    "IATClient_DeliveryGroupName": "2_TEST_AVCPACKAGINGAO_CE1IAT",
+    "citrixClientId" : "400addf1-3aff-43be-a28d-5a01b4080d77",
+    "citrixidpinstanceid" : "da5bef6a-6624-4073-803a-ed2b2759964a"
+}

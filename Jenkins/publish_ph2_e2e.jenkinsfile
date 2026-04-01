@@ -1,0 +1,744 @@
+def checkVar = "yes"
+def agentName = "prod-agent2" // Replace with your agent label 
+def psCommand = ""
+def result = [
+    retcode: 0,
+    retStage: "All Stages Completed",
+    retdescription: "Success"
+]
+// Helper function to catch the error form the powershell scripts
+def checkPsError(output, stageName) {
+    if (!output) return
+
+    if (output.contains("PS_ERROR_DESC=")) {
+        def errorDesc = output.split("PS_ERROR_DESC=")[1].trim()
+        result.retdescription = errorDesc
+        result.retStage = stageName
+        error("Error in ${stageName}: ${errorDesc}")
+    }
+}
+// Helper function to move the JSONs from binaries to artifact folders 
+def copyArtifactFile = { src, destDir, destPath ->
+    bat """
+        if not exist "${destDir}" mkdir "${destDir}"
+        copy "${src}" "${destPath}" /Y
+    """
+    echo "File copied successfully to: ${destPath}"
+}
+// Helper function to use creds (Security purpose)
+def runPsWithCreds(List creds, String pscommand) {
+    def bindings = creds.collect { cred ->
+        if (cred.type == 'pass') {
+            return string(credentialsId: cred.id, variable: cred.passVar)
+        }
+        if (cred.type == 'userpass') {
+            return usernamePassword(credentialsId: cred.id, usernameVariable: cred.userVar, passwordVariable: cred.passVar)
+        }
+        error "Unsupported credential type for ${cred.id}"
+    }
+    return withCredentials(bindings) {
+        def output = powershell(returnStdout: true, script: pscommand).trim()
+        return output
+    }
+}
+
+properties([
+  parameters([
+    [
+      $class: 'ChoiceParameter',
+      name: 'Operation',
+      choiceType: 'PT_RADIO',
+      description: 'Select operational mode',
+      script: [
+        $class: 'GroovyScript',
+        script: [
+          classpath: [],
+          sandbox: true,
+          script: "return ['Publish', 'Verify', 'Package']"
+        ]
+      ]
+    ],
+    [
+      $class: 'ChoiceParameter',
+      name: 'Email',
+      choiceType: 'PT_RADIO',
+      description: 'Send E-mail Notification',
+      script: [
+        $class: 'GroovyScript',
+        script: [
+          classpath: [],
+          sandbox: true,
+          script: "return ['Yes', 'No']"
+        ]
+      ]
+    ],
+    [
+      $class: 'ChoiceParameter',
+      name: 'SmokeTest',
+      choiceType: 'PT_RADIO',
+      description: 'Want to Trigger Smoke test Pipeline?',
+      script: [
+        $class: 'GroovyScript',
+        script: [
+          classpath: [],
+          sandbox: true,
+          script: "return ['No', 'Yes']"
+        ]
+      ]
+    ],
+    [
+      $class: 'ChoiceParameter',
+      name: 'OnDemandTrigger',
+      choiceType: 'PT_RADIO',
+      description: 'Select "Yes" to trigger IAF pipeline for the specified apps on demand.',
+      script: [
+        $class: 'GroovyScript',
+        script: [
+          classpath: [],
+          sandbox: true,
+          script: "return ['No', 'Yes']"
+        ]
+      ]
+    ],
+    string(name: 'AppListName', defaultValue: '', description: 'Specify Applist file name (e.g. AppList.json) to be processed when the On-Demand Trigger is set to "Yes".'),
+    string(name: 'IAFAppIds', defaultValue: '', description: 'Enter one or more AppName/AppId pairs for the IAF apps. Use the format AppName:AppId and separate multiple entries with semicolons. For example: AppName1:AppId1;AppName2:AppId2;AppName3:AppId3')
+
+  
+   ])//,
+// pipelineTriggers([
+//          cron('H H * * *')   // Runs once a day at a hashed hour
+//   ])
+])
+pipeline {
+    agent { label "${agentName}" }
+    environment {
+        BUILD_LOCATION_CE1 = "CE1"
+        BUILD_LOCATION_CE2LE = "CE2LE"
+        PIPELINE_WORKSPACE = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}" 
+        BUILD_BINARIESDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}\\b" 
+        BUILD_ARTIFACTSTAGINGDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}\\a" 
+        BUILD_SOURCESDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}\\s"
+    }
+    stages {
+        stage("Initialize and Setup") {
+            steps {
+                script {
+                    try{
+                        // Read Configuration
+                        dir("configs") {
+                            def imagesettings_CE1 = readJSON file: "${BUILD_LOCATION_CE1}-STD.json"
+                            env.IntuneWorkspaceID = "${imagesettings_CE1.IntuneWorkspaceID}"
+                            env.ARM_TENANT_ID = "${imagesettings_CE1.ARM_TENANT_ID}"
+                            env.ARM_CLIENT_ID = "${imagesettings_CE1.ARM_CLIENT_ID}"
+                            env.SMTP_USERNAME = "${imagesettings_CE1.SMTP_Username}"
+                            env.Email_To = "${imagesettings_CE1.Email_To}"
+                            env.ARCHIVESTORAGEACCOUNTNAME =  "${imagesettings_CE1.ARCHIVESTORAGEACCOUNTNAME}"
+                            env.ARCHIVECONTAINERNAME  =  "${imagesettings_CE1.ARCHIVECONTAINERNAME}"
+                            env.APP_CATALOGUE_USERNAME =  "${imagesettings_CE1.APP_CATALOGUE_USERNAME}"
+                            env.GITHUB_OWNER_APPPACKAGING =  "${imagesettings_CE1.GITHUB_OWNER_APPPACKAGING}"
+                            env.GITHUB_OWNER_APPFACTORY =  "${imagesettings_CE1.GITHUB_OWNER_APPFACTORY}"
+                            env.GITHUB_CODE_REPO =  "${imagesettings_CE1.GITHUB_CODE_REPO}"
+                            env.GITHUB_ONBOARDING_REPO =  "${imagesettings_CE1.GITHUB_ONBOARDING_REPO}"
+                            env.GITHUB_CUSTOM_EVERGREEN_REPO =  "${imagesettings_CE1.GITHUB_CUSTOM_EVERGREEN_REPO}"
+                            env.GITHUB_ONBOARDING_REPO_BRANCH =  "${imagesettings_CE1.GITHUB_ONBOARDING_REPO_BRANCH}"
+                            env.APP_CATALOGUE_BASE_URL = "${imagesettings_CE1.APP_CATALOGUE_BASE_URL}"
+
+                            def imagesettings_CE2LE = readJSON file: "${BUILD_LOCATION_CE2LE}-STD.json"
+                            env.CitrixCustomerId = "${imagesettings_CE2LE.LEcitrixcustomerid}"
+                            env.CitrixClientId = "${imagesettings_CE2LE.citrixClientId}"
+                        }
+                        dir("Scripts") {
+                            echo "Create the Directories and Sub directories"    
+                            def Createdirectories = powershell(returnStdout: true, script: ''' ./Create-PipelineDirectories.ps1''')
+                            echo Createdirectories                 
+                            checkPsError(Createdirectories, "Initialize and Setup")
+                            }
+                        // Clone Repository
+                        echo "Cloning repository into ${BUILD_SOURCESDIRECTORY}..."
+                        dir("${BUILD_SOURCESDIRECTORY}") {
+                            checkout([
+                                $class: 'GitSCM',
+                                branches: [[name: '*/main']], // Update with correct branch name
+                                userRemoteConfigs: [[
+                                    url: "https://github.developer.allianz.io/${env:GITHUB_OWNER_APPFACTORY}/${GITHUB_CODE_REPO}.git",   
+                                    credentialsId: "tu-lmvnqin-GITHUB-PAT"
+                                ]]
+                            ])
+                        }
+                        echo "Syncing the applications with the Jenkins Clone"                        
+                            psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Sync-OnboardedApps.ps1' -repository '${GITHUB_ONBOARDING_REPO}' | Out-String"
+                            def SynOnboardedApps = runPsWithCreds([[id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT_PSW']], psCommand)
+                            echo SynOnboardedApps
+                            checkPsError(SynOnboardedApps, "Initialize and Setup")
+                    }catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Initialize and Setup"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Install necessary modules and clean up previous files') {
+            when {
+                expression { return params.Operation == 'Package' || params.Operation == 'Publish' || params.Operation == 'Verify' }
+            }
+            steps {
+                script {
+                try{
+                    echo "Validate Test-TemplatesFolder"                
+                        psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Test-TemplatesFolder.ps1' | Out-String"
+                        def testTemplatesOutput = powershell(returnStdout: true, script: psCommand).trim()
+                        echo testTemplatesOutput
+                        checkPsError(testTemplatesOutput, "Install necessary modules and clean up previous files")
+                    echo "Preparing pipeline environment and installting the necessary module"
+                        psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Install-Modules.ps1' | Out-String"
+                        def installModulesOutput = runPsWithCreds([[id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT_PSW']], psCommand)
+                        echo installModulesOutput
+                    echo "Copying Evergreen Custom Applications to the Latest Version"
+                        psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\CopyCustomEvergreen-Modules.ps1' -evergreenrepository '${GITHUB_CUSTOM_EVERGREEN_REPO}' -appsrepository '${GITHUB_ONBOARDING_REPO}' | Out-String"
+                        def CopyEvergreenModule = runPsWithCreds([[id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT_PSW']], psCommand)
+                        echo CopyEvergreenModule
+                        checkPsError(CopyEvergreenModule, "Install necessary modules and clean up previous files")
+                    // Run Remove-Files.ps1 and capture its output
+                    echo "Cleanup previous files in the  build directory..."
+                        psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Remove-Files.ps1' | Out-String"
+                        def removeFilesOutput = powershell(returnStdout: true, script: psCommand).trim()
+                        echo removeFilesOutput
+                        checkPsError(removeFilesOutput, "Install necessary modules and clean up previous files")               
+                }catch (Exception ex) {
+                    result.retcode = 1
+                    result.retdescription = "${ex.getMessage()}"
+                    result.retStage = "Install necessary modules and clean up previous files"
+                    error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Setup On-Demand Applist') {
+            when {
+                expression { return params.OnDemandTrigger == 'Yes' }
+            }
+            steps {
+                script {
+                    try{
+                        def OnDemandAppFileName = "${params.AppListName}".trim()
+                        echo "Input File Name: ${OnDemandAppFileName}"
+                        if (!OnDemandAppFileName) {error("File Name is empty or null. Aborting pipeline.")}
+                        echo "Replacing the Applist.json"
+                            psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Replace-AppList.ps1' -repo_name '${GITHUB_ONBOARDING_REPO}' -NewAppListName '${OnDemandAppFileName}' | Out-String"
+                            def replaceapplist = runPsWithCreds([[id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT_PSW']], psCommand)
+                            echo replaceapplist
+                            checkPsError(replaceapplist, "Setup On-Demand Application list")
+                        // Fetching AppId details
+                        def OnDemandAppIdDetails = "${params.IAFAppIds}"
+                        echo "AppIdList Name: ${OnDemandAppIdDetails}"
+                            if (!OnDemandAppIdDetails?.trim()) {error("AppId List is missing. Aborting pipeline.")}
+                        echo "Fetching AppId's From On-Demand Trigger"
+                            psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Generate-AppIdJson.ps1' -AppInputString '${OnDemandAppIdDetails}' | Out-String"
+                            def generateappidjson = powershell(returnStdout: true, script: psCommand).trim()
+                            echo generateappidjson
+                            checkPsError(generateappidjson, "Setup On-Demand Application list")
+                    } catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Set up On-Demand Configurations"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Ensure onboarded apps have required files for publishing') { 
+            when {
+                expression { return params.Operation == 'Package' || params.Operation == 'Publish' || params.Operation == 'Verify' }
+            }
+            steps { 
+                script {                     
+                    try{
+                    echo "Validation to check the if all the file exists in Apps folders"
+                        psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Test-AppFiles.ps1' | Out-String "
+                        def scriptOutput1 = powershell(returnStdout: true, script: psCommand).trim()
+                        echo scriptOutput1
+                        checkPsError(scriptOutput1, "Ensure onboarded apps have required files for publishing")
+                    // Move the AppsProcessList.json to artifact directory.
+                    copyArtifactFile(
+                        "${BUILD_BINARIESDIRECTORY}\\AppsProcessList.json",
+                        "${BUILD_ARTIFACTSTAGINGDIRECTORY}\\AppsProcessList",
+                        "${BUILD_ARTIFACTSTAGINGDIRECTORY}\\AppsProcessList\\AppsProcessList.json"
+                    )
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Ensure onboarded apps have required files for publishing'"
+                        error("Result: ${result}")
+                    }   
+                }                    
+            } 
+        }
+        stage('Identify new apps eligible for processing') {
+            when {
+                expression { return params.Operation == 'Package' || params.Operation == 'Publish'}
+            }
+            steps {
+                script {
+                    try{
+                        echo "Displaying Test-AppList script output:"
+                            psCommand = """
+                                \$env:GITHUB_PAT = \$env:GIT_PAT_PSW
+                                & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Test-AppList.ps1' -TenantID '${env:ARM_TENANT_ID}' -ClientID '${env:ARM_CLIENT_ID}' | Out-String
+                                    """                      
+                            def scriptOutput2 = runPsWithCreds([[id: 'PROD-CLIENT-SECRET', type: 'pass', passVar: 'CLIENT_SECRET'],
+                                                                [id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT_PSW']], psCommand)
+                            echo scriptOutput2
+                            checkPsError(scriptOutput2, "Identify new apps eligible for processing")
+                        //Check for known failure messages realetd to graph request failure
+                        if (scriptOutput2.contains('503') || scriptOutput2.contains('ServerBusy') || scriptOutput2.contains('Graph request failed')) {
+                            echo "ERROR: Detected 503 (ServiceUnavailable) or ServerBusy error, aborting pipeline."
+                            currentBuild.result = 'FAILURE'
+                            checkVar = 'no'
+                            return
+                        }
+                        //Abort Pipeline in case there is no app for update                       
+                        if (scriptOutput2.contains('No new applications to be published, aborting pipeline')) {
+                            echo "No new applications to be published, aborting pipeline"
+                            currentBuild.result = 'SUCCESS'
+                            checkVar = 'no'
+                            return
+                        }
+                        // Run Skip-BlockedApps.ps1 and capture its output
+                        echo "Skip Blacklisted Apps from Download List..."
+                            psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Skip-BlockedApps.ps1' | Out-String"
+                            def removeFilesOutput3 = runPsWithCreds([[id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT_PSW']], psCommand)
+                            echo removeFilesOutput3
+                            checkPsError(removeFilesOutput3, "Identify new apps eligible for processing")
+                            //Incase all the apps are blocked stop the pipeline
+                        if (removeFilesOutput3.contains('The Applications were blocked, aborting pipeline')) {
+                                echo "No new applications to be published, aborting pipeline"
+                                currentBuild.result = 'SUCCESS'
+                                checkVar = 'no'
+                                return
+                            }
+                        //Copy the Json to the artifact directory
+                        copyArtifactFile(
+                            "${BUILD_BINARIESDIRECTORY}\\AppsDownloadList.json",
+                            "${BUILD_ARTIFACTSTAGINGDIRECTORY}\\AppsDownloadList",
+                            "${BUILD_ARTIFACTSTAGINGDIRECTORY}\\AppsDownloadList\\AppsDownloadList.json"
+                        )
+                    }catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Identify new apps eligible for processing'"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Catalogue Entry Creation for Upgrades') {
+            when {
+                expression { return (params.Operation == 'Package' || params.Operation == 'Publish') && checkVar == 'yes' && params.OnDemandTrigger == 'No'}
+            }
+            steps {
+                script {
+                    try{
+                        echo "Create Entry in the catalogue for a new version"
+                            psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Create-NewAppIds.ps1' -username '${APP_CATALOGUE_USERNAME}'| Out-String"
+                            def createappid = runPsWithCreds([[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)
+                            echo createappid
+                            checkPsError(createappid, "Catalogue Entry Creation")
+                    } catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Catalog Entry Creation"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        // stage('Update the catalog entry for the new versions') {
+        //     when {
+        //         expression { return (params.Operation == 'Package' || params.Operation == 'Publish') && checkVar == 'yes'}// && params.OnDemandTrigger != 'Yes'}
+        //     }
+        //     steps {
+        //         script {
+        //             try{
+        //                 echo "Sending Email to create Entry in the catalogue for a new version"
+        //                     psCommand = " & '${env.BUILD_SOURCESDIRECTORY}\\Scripts\\Notify-CatalogueEntry.ps1' -TMUusername '${SMTP_USERNAME}' | Out-String"
+        //                     def emailcreateappid = runPsWithCreds([[id: 'LQKAEZU-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
+        //                     echo emailcreateappid
+        //                     checkPsError(emailcreateappid, "Sending Email to create Entry in the catalogue for a new version")
+        //             }
+        //             catch(Exception ex) {
+        //                     result.retcode = 1
+        //                     result.retdescription = "${ex.getMessage()}"
+        //                     result.retStage = "Sending Email to create Entry in the catalogue for a new version"
+        //                     error("Result: ${result}")
+        //             }
+        //         }
+        //     }
+        // }
+        stage('Download apps ready for processing and update AppConfig') {
+            when {
+                expression { return (params.Operation == 'Package' || params.Operation == 'Publish') && checkVar == 'yes' }
+                }
+            steps {
+                script {
+                    try{
+                        // Run the PowerShell script and capture its output
+                        echo "Saving Installer files"
+                            psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Save-Installer.ps1' | Out-String "
+                            def downloadapps = runPsWithCreds([[id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT_PSW'],
+                                                                [id: 'PROD-SA-SECRET', type: 'pass', passVar: 'SA_SECRET'],
+                                                                [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)
+                            echo downloadapps // Print the captured output to Jenkins logs
+                        echo "Moving Config Files to Installer Folders"
+                            psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Download-AppConfigFile.ps1' | Out-String"
+                            def downloadconfigs = runPsWithCreds([[id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT_PSW']], psCommand)
+                            echo downloadconfigs // Print the captured output to Jenkins logs
+                            checkPsError(downloadconfigs, "Download apps ready for processing and update AppConfig")         
+                        //Copy the Json to the artifact directory
+                        copyArtifactFile(
+                            "${BUILD_BINARIESDIRECTORY}\\AppsPrepareList.json",
+                            "${BUILD_ARTIFACTSTAGINGDIRECTORY}\\AppsPrepareList",
+                            "${BUILD_ARTIFACTSTAGINGDIRECTORY}\\AppsPrepareList\\AppsPrepareList.json"
+                        )
+                        //Add AppId to App.json config file
+                        echo "Update the Notes in the App.json"
+                            psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Update-IntuneAppNotes.ps1' | Out-String"
+                            def updateNotesOutput = powershell(returnStdout: true, script: psCommand).trim()
+                            echo updateNotesOutput
+                            checkPsError(updateNotesOutput, "Download apps ready for processing and update AppConfig")
+                    }
+                    catch(Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Download apps ready for processing and update AppConfig"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Set up packaging environment and copy necessary files') {
+            when {
+               expression { return (params.Operation == 'Package' || params.Operation == 'Publish') && checkVar == 'yes' }
+            }
+            steps {
+                script {
+                    try{
+                        // Run the PowerShell script if the file doesn't exist
+                        echo "Prepare packages and code Signing"
+                            psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Prepare-AppPackageFolder.ps1' | Out-String"
+                            def packageapps = runPsWithCreds([[id: 'CodeSigningPK', type: 'pass', passVar: 'SCRIPTSIGNIN'],
+                                                                [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)
+                            echo packageapps           
+                        //Copy the Json to the artifact directory
+                        copyArtifactFile(
+                            "${BUILD_BINARIESDIRECTORY}\\AppsPublishList.json",
+                            "${BUILD_ARTIFACTSTAGINGDIRECTORY}\\AppsPublishList",
+                            "${BUILD_ARTIFACTSTAGINGDIRECTORY}\\AppsPublishList\\AppsPublishList.json"
+                        )
+                    }catch (Exception ex) {
+                            result.retcode = 1
+                            result.retdescription = "${ex.getMessage()}"
+                            result.retStage = "Set up packaging environment and copy necessary files"
+                            error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Upload apps to storage for archival') {
+            when {
+                expression { return (params.Operation == 'Package' || params.Operation == 'Publish') && checkVar == 'yes'}
+            }
+            steps {
+                script {
+                    try { 
+                        echo "Prepare packages and code Signing"
+                            psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\New-AppArchive.ps1' -StorageAccountName ${ARCHIVESTORAGEACCOUNTNAME} -ContainerName ${ARCHIVECONTAINERNAME} | Out-String"
+                            def archiveOutput = runPsWithCreds([[id: 'PROD-SA-SECRET', type: 'pass', passVar: 'SA_SECRET'],
+                                                                [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)
+                            echo archiveOutput
+                            checkPsError(archiveOutput, "Upload apps to storage for archival")                  
+                    } catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Upload apps to storage for archival"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Pre-Check For SmokeTest Device Groups and TU accounts'){
+            when {
+                expression { (params.Operation == 'Package' || params.Operation == 'Publish') && checkVar == 'yes' && params.SmokeTest == "Yes"}
+            }
+            steps {
+                script {
+                    try{
+                    echo "Processing Precheck Stage for Smoke Test Groups availability"
+                        psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Validate-SmokeTestGroups.ps1' -TenantID '${env:ARM_TENANT_ID}' -ClientID '${env:ARM_CLIENT_ID}'| Out-String"
+                        def validateTuGroups = runPsWithCreds([[id: 'PROD-CLIENT-SECRET', type: 'pass', passVar: 'CLIENT_SECRET']], psCommand)
+                        echo validateTuGroups
+                        checkPsError(validateTuGroups, "Pre-Check For SmokeTest Device Groups")
+                    echo "Processing Precheck for Smoke Test TU Accounts "
+                        psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Validate-TUAccounts.ps1' -CitrixCustomerId '${env:CitrixCustomerId}' -citrixClientId '${env:CitrixClientId}' | Out-String"
+                        def validateTuaccounts = runPsWithCreds([[id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
+                        echo validateTuaccounts
+                        checkPsError(validateTuaccounts, "Pre-Check For TU accounts")
+                    echo "Creating Smoke Test VM Creation Payload..."
+                        psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Prepare-LEVMCreationData.ps1' | Out-String"
+                        def preparelevmpayload = powershell(returnStdout: true, script: psCommand).trim()
+                        echo preparelevmpayload
+                        checkPsError(preparelevmpayload, "Pre-Check For SmokeTest Device Groups and TU accounts")
+                    }
+                    catch(Exception ex) {
+                    result.retcode = 1
+                    result.retdescription = "${ex.getMessage()}"
+                    result.retStage = "Pre-Check For SmokeTest Device Groups and TU accounts"
+                    error("Result: ${result}")
+                    }
+
+                }
+            }
+            
+        }
+        stage('Package and publish apps to Intune') {
+            when {
+                expression { return params.Operation == 'Publish' && checkVar == 'yes' }
+            }
+            steps {
+                script {
+                    try {
+                        echo "Prepare .intunewin file and upload to intune"
+                            psCommand = " & '${env.BUILD_SOURCESDIRECTORY}\\Scripts\\New-Win32App.ps1' -TenantID '${env:ARM_TENANT_ID}' -ClientID '${env:ARM_CLIENT_ID}' | Out-String"
+                            def publishOutput = runPsWithCreds([[id: 'PROD-LA-IAF-PrimaryKey', type: 'pass', passVar: 'LA_IAF_PrimaryKey'],
+                                                                [id: 'PROD-CLIENT-SECRET', type: 'pass', passVar: 'CLIENT_SECRET'],
+                                                                [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)
+                            echo publishOutput
+                            checkPsError(publishOutput, "Package and publish apps to Intune")
+                        //Copy the Json to the artifact directory
+                        copyArtifactFile(
+                            "${BUILD_BINARIESDIRECTORY}\\AppsAssignList.json",
+                            "${BUILD_ARTIFACTSTAGINGDIRECTORY}\\AppsPublishedList",
+                            "${BUILD_ARTIFACTSTAGINGDIRECTORY}\\AppsPublishedList\\AppsAssignList.json"
+                        )
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Package and publish apps to Intune"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Assign published apps to groups in Intune') {
+            when {
+                expression { return params.Operation == 'Publish' && checkVar == 'yes'}
+            }
+            steps {
+                script {
+                    try{
+                        // Run the PowerShell script for app assignment and capture its output
+                        echo "Processing App Assignment config from App.json"
+                            psCommand = " & '${env.BUILD_SOURCESDIRECTORY}\\Scripts\\New-AppAssignment.ps1' -TenantID '${env:ARM_TENANT_ID}' -ClientID '${env:ARM_CLIENT_ID}'| Out-String"
+                            def publishOutput = runPsWithCreds([[id: 'PROD-CLIENT-SECRET', type: 'pass', passVar: 'CLIENT_SECRET'],
+                                                                [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)
+                            echo publishOutput
+                            checkPsError(publishOutput, "Assign published apps to groups in Intune")
+                    }catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Assign published apps to groups in Intune"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Setup App Supersedence and Dependency') {
+            when {
+                expression { return params.Operation == 'Publish' && checkVar == 'yes'}
+            }
+            steps {
+                script {
+                    try{
+                         echo "Setting app supersedence from Set-Supersedence.json"
+                            psCommand = " & '${env.BUILD_SOURCESDIRECTORY}\\Scripts\\Set-Supersedence.ps1' -TenantID '${env:ARM_TENANT_ID}' -ClientID '${env:ARM_CLIENT_ID}' | Out-String"
+                            def SupersedenceScriptOutput = runPsWithCreds([[id: 'PROD-CLIENT-SECRET', type: 'pass', passVar: 'CLIENT_SECRET'],
+                                                                        [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)
+                            echo SupersedenceScriptOutput
+                            checkPsError(SupersedenceScriptOutput, "Set app Supersedence in Intune")
+                        // Run the PowerShell script for setting app dependencies and capture its output
+                        echo "Setting app dependencies from AppsAssignList.json"
+                            psCommand = " & '${env.BUILD_SOURCESDIRECTORY}\\Scripts\\AssignAppsList.ps1' -TenantID '${env:ARM_TENANT_ID}' -ClientID '${env:ARM_CLIENT_ID}' | Out-String"
+                            def dependencyScriptOutput = runPsWithCreds([[id: 'PROD-CLIENT-SECRET', type: 'pass', passVar: 'CLIENT_SECRET']], psCommand)
+                            echo dependencyScriptOutput
+                            checkPsError(dependencyScriptOutput, "Set app dependencies in Intune")
+                    }catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Set app dependencies in Intune"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Notify AO and HCL teams for the newer versions') {
+            when {
+                expression { return params.Operation == 'Publish' && checkVar == 'yes' && params.Email == 'Yes'}
+            }
+            steps {
+                script {
+                    try{
+                        //Notify the Application Owners
+                        withCredentials([string(credentialsId: 'LQKAEZU-Password', variable: 'SMTP_PASSWORD')]) {
+                            //Notify the Application Owners
+                            echo "Notify the Application Owners"
+                                psCommand = " & '${env.BUILD_SOURCESDIRECTORY}\\Scripts\\Notify-ApplicationOwner.ps1' -TenantID '${env:ARM_TENANT_ID}' -ClientID '${env:ARM_CLIENT_ID}' -TMUusername '${env:SMTP_USERNAME}' | Out-String"
+                                def writeVariableOutput1 = runPsWithCreds([[id: 'LQKAEZU-Password', type: 'pass', passVar: 'SMTP_PASSWORD'],
+                                                                            [id: 'PROD-CLIENT-SECRET', type: 'pass', passVar: 'CLIENT_SECRET']], psCommand)
+                                echo writeVariableOutput1
+                                checkPsError(writeVariableOutput1, "Notify AO for the newer versions")
+                            echo "Notify the HCL teams"
+                                psCommand = " & '${env.BUILD_SOURCESDIRECTORY}\\Scripts\\Notify-HCLTeams.ps1' -TenantID '${env:ARM_TENANT_ID}' -ClientID '${env:ARM_CLIENT_ID}' -TMUusername '${env:SMTP_USERNAME}' | Out-String"
+                                def writeVariableOutput3 = runPsWithCreds([[id: 'LQKAEZU-Password', type: 'pass', passVar: 'SMTP_PASSWORD'],
+                                                                            [id: 'PROD-CLIENT-SECRET', type: 'pass', passVar: 'CLIENT_SECRET']], psCommand)
+                                echo writeVariableOutput3
+                                checkPsError(writeVariableOutput3, "Notify HCL teams for the newer versions")
+                        }
+                    }
+                    catch(Exception ex) {
+                            result.retcode = 1
+                            result.retdescription = "${ex.getMessage()}"
+                            result.retStage = "Notify HCL team for the newer versions"
+                            error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Published App Validation and Report Generation') {
+            when {
+            expression { return (params.Operation == 'Publish') && checkVar == 'yes' }
+            }
+            steps {
+                script {
+                    try{
+                        echo "Notify On Boarding Status"
+                            psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\PDFReport-Generation.ps1' -TenantID '${env:ARM_TENANT_ID}' -ClientID '${env:ARM_CLIENT_ID}' | Out-String"
+                            def writeVariableOutput = runPsWithCreds([[id: 'PROD-CLIENT-SECRET', type: 'pass', passVar: 'CLIENT_SECRET']], psCommand)          
+                            echo writeVariableOutput
+                            checkPsError(writeVariableOutput, "Published App Validation and Report Generation")
+                        def Status = ''
+                        if (writeVariableOutput.contains('All Applications were published on Intune.')) {
+                            echo "All Applications were published on Intune."
+                            currentBuild.result = 'SUCCESS'
+                            Status = 'SUCCESS'
+
+                        } else if (writeVariableOutput.contains('Some Applications were not published.')) {
+                            echo "Some Applications failed to publish !!!"
+                            currentBuild.result = 'FAILURE'
+                            Status = 'PARTIAL'
+
+                        } else {
+                            echo "Unexpected output detected. Please check the Logs !!!"
+                            currentBuild.result = 'FAILURE'
+                            error("Pipeline failed due to unexpected output")
+                        }
+                        withCredentials([string(credentialsId: 'LQKAEZU-Password', variable: 'SMTP_PASSWORD')]) {
+                            //Notify the Onboarding Status
+                            echo "Output from Notify-ApplicationOwner.ps1"
+                                psCommand = " & '${env.BUILD_SOURCESDIRECTORY}\\Scripts\\Notify-Onboarding.ps1' -Status ${Status} -TMUusername '${SMTP_USERNAME}' | Out-String"
+                                def writeVariableOutput1 = runPsWithCreds([[id: 'LQKAEZU-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
+                                echo writeVariableOutput1
+                                checkPsError(writeVariableOutput1, "Published App Validation and Report Generation")
+                        }
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Published App Validation and Report Generation"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Trigger LE Smoke Test VM Creation Pipeline') {
+            when {
+                expression { return params.Operation == 'Publish' && checkVar == 'yes' && params.SmokeTest == "Yes"}
+            }
+            steps {
+                script {
+                    try{
+
+                    build job: 'ST_LE_SMOKETEST_VM_CREATION',
+                        wait: true,
+                        parameters: [
+                            string(name: 'IAF_JOBNAME', value: env.JOB_NAME),
+                            string(name: 'IAF_BUILD', value: env.BUILD_NUMBER)
+                        ]
+                    }
+                    catch(Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Trigger LE Smoke Test VM Creation Pipeline"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Publish LE Config Data') {
+            when {
+                expression { return (params.Operation == 'Package' || params.Operation == 'Publish') && checkVar == 'yes' && params.SmokeTest == "Yes"}
+            }
+            steps {
+                script {
+                    try {
+                        echo "Running Prepare-LETestData.ps1 script..."
+                        psCommand = " & '${BUILD_SOURCESDIRECTORY}\\Scripts\\Prepare-LETestData.ps1' | Out-String"
+                        def prepareleconfigdata = powershell(returnStdout: true, script: psCommand).trim()
+                        echo prepareleconfigdata
+                        checkPsError(prepareleconfigdata, "Publish LE Config Data")
+                    } catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Publish LE Config Data"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Initiate Testing pipelines (Smoke test, WDAC, Crowdstrike, Qulays)') {
+            when {
+                expression { return params.Operation == 'Publish' && checkVar == 'yes' && params.SmokeTest == "Yes"}
+            }
+            steps {
+                script {
+                    try{
+                        def jobName = env.JOB_NAME
+                        def buildNumber = env.BUILD_NUMBER
+                        def LE_TEST_inputFileName = "LEAppList_${jobName}_${buildNumber}.json" // JSON for LE Test data.
+
+                        build job: 'ST_LE_TESTSUITE_CREATION',
+                            wait: true,
+                            parameters: [
+                                string(name: 'LE_TEST_inputFileName', value: LE_TEST_inputFileName),
+                                string(name: 'IAF_JOBNAME', value: env.JOB_NAME),
+                                string(name: 'IAF_BUILD', value: env.BUILD_NUMBER)
+                            ]
+                    }
+                    catch(Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Trigger LE SMOKE TESTING"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            script {echo "Result: ${result}"}
+        }
+    }
+}

@@ -1,0 +1,21 @@
+{
+    "IntuneWorkspaceID": "47f65d29-3a2c-443e-be70-ebd6b28dca09",
+    "ARM_TENANT_ID": "6e06e42d-6925-47c6-b9e7-9581c7ca302a",
+    "ARM_CLIENT_ID": "b25ed46a-deaf-4153-a852-82d809adf606",
+    "SMTP_Username": "lqkaezu",
+    "ARCHIVESTORAGEACCOUNTNAME" :"packageshareprod",
+    "ARCHIVECONTAINERNAME" : "share",
+    "APP_CATALOGUE_USERNAME" : "lmvnqin", 
+    "GITHUB_OWNER_APPPACKAGING" : "WorkplaceServices",
+    "GITHUB_OWNER_APPFACTORY" : "WorkplaceServices",
+    "GITHUB_CODE_REPO" :   "IAF-PipelineInfraConfiguration",
+    "GITHUB_ONBOARDING_REPO" : "IAF-App-Onboarding",
+    "GITHUB_ONBOARDING_REPO_BRANCH" : "main",
+    "GITHUB_CUSTOM_EVERGREEN_REPO" : "IAF-AppFactory-EvergreenModule",
+    "QUALYSARCHIVECONTAINERNAME": "qualysreport",
+    "CROWDSTRIKECONTAINERNAME": "crowdstrikereport",
+    "QUALYS_REPORT_BLOBNAME_FOLDER": "Qualys_ODScan_Reports",
+    "CROWDSTRIKE_BLOBNAME_FOLDER": "CrowdstrikeODScanReports",
+    "BASELINE_BLOBNAME_FOLDER": "Qualys_baseline_image_report",
+    "APP_CATALOGUE_BASE_URL": "https://wps-appcatalogue.allianz.com/api/v1"
+}

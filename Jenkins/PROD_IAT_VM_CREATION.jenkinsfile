@@ -1,0 +1,135 @@
+def agentName = "prod-agent2"
+def psCommand = ""
+def result = [
+    retcode: 0,
+    retStage: "All Stages Completed",
+    retdescription: "Success"
+]
+// Helper function to use creds (Security purpose)
+def runPsWithCreds(List creds, String pscommand) {
+    def bindings = creds.collect { cred ->
+        if (cred.type == 'pass') {
+            return string(credentialsId: cred.id, variable: cred.passVar)
+        }
+        if (cred.type == 'userpass') {
+            return usernamePassword(credentialsId: cred.id, usernameVariable: cred.userVar, passwordVariable: cred.passVar)
+        }
+        error "Unsupported credential type for ${cred.id}"
+    }
+    return withCredentials(bindings) {
+        def output = powershell(returnStdout: true, script: pscommand).trim()
+        return output
+    }
+}
+// Helper function to catch the error form the powershell scripts
+def checkPsError(output, stageName) {
+    if (!output) return
+
+    if (output.contains("PS_ERROR_DESC=")) {
+        def errorDesc = output.split("PS_ERROR_DESC=")[1].trim()
+        result.retdescription = errorDesc
+        result.retStage = stageName
+        error("Error in ${stageName}: ${errorDesc}")
+    }
+}
+
+pipeline {
+    agent {
+        label "${agentName}"
+    }
+    environment {
+        VDI_BUILD_LOCATION_CE1IAT = "CE1IAT"
+        VDI_BUILD_LOCATION_CE1 = "CE1"
+        
+        // Below are the IAF Build Locations that triggered this pipeline.
+        IAF_JOBNAME = "${params.IAF_JOBNAME}"
+        IAF_BUILD = "${params.IAF_BUILD}"
+        PIPELINE_WORKSPACE = "C:\\IntuneAPPFactory\\_work\\${IAF_JOBNAME}\\${IAF_BUILD}"
+        BUILD_BINARIESDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${IAF_JOBNAME}\\${IAF_BUILD}\\b"
+        BUILD_ARTIFACTSTAGINGDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${IAF_JOBNAME}\\${IAF_BUILD}\\a"
+        BUILD_SOURCESDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${IAF_JOBNAME}\\${IAF_BUILD}\\s"
+    }
+    stages {
+        stage("Read Config and Intialize the environment variables") {
+            steps {
+                dir("configs"){
+                    script {
+                        def imagesettings_CE1IAT = readJSON file: "${VDI_BUILD_LOCATION_CE1IAT}-STD.json"
+                        def imagesettings_CE1 = readJSON file: "${VDI_BUILD_LOCATION_CE1}-STD.json"
+                        
+                        // rg related related info
+                        env.ARM_TENANT_ID = "${imagesettings_CE1.ARM_TENANT_ID}"
+                        env.ARM_CLIENT_ID = "${imagesettings_CE1.ARM_CLIENT_ID}"
+                        env.SMTP_USERNAME = "${imagesettings_CE1.SMTP_Username}"
+                        env.APP_CATALOGUE_USERNAME = "${imagesettings_CE1.APP_CATALOGUE_USERNAME}"
+                        env.APP_CATALOGUE_BASE_URL = "${imagesettings_CE1.APP_CATALOGUE_BASE_URL}"
+
+                        // Citrix related info
+                        env.Dev_CustomerId_CE1 = "${imagesettings_CE1IAT.Dev_CustomerId}"
+                        env.PackagingSubscriptionId = "${imagesettings_CE1IAT.packaging_subscriptionid}"
+                        env.IATClient_ResourceGroupName_CE1 = "${imagesettings_CE1IAT.iatclient_resourcegroup_name}"
+                        env.IATClient_CatalogName_CE1 = "${imagesettings_CE1IAT.IATClient_CatalogName}"
+                        env.IATClient_DeliveryGroupName_CE1 = "${imagesettings_CE1IAT.IATClient_DeliveryGroupName}"
+                        env.CitrixIdpInstanceId = "${imagesettings_CE1IAT.citrixidpinstanceid}"
+                        env.TF_VAR_client_id = "${imagesettings_CE1IAT.vm_clientid_Ce1_infra_terraform}"
+                        env.TF_VAR_tenant_id = "${imagesettings_CE1IAT.vm_tenantid_Ce1_infra_terraform}"
+                        env.citrixClientId = "${imagesettings_CE1IAT.citrixClientId}"
+                      
+                    }
+                }
+            }
+        }
+        stage("Create and add Machines in IAT Machine Catalog") {
+            steps {
+                script {
+                    try{               
+                        dir("PowerShell") {
+                        echo "Run Citrix-Add-Machine-IATClient.ps1"
+                            psCommand = " ./Citrix-Add-Machine-IATClient.ps1 -CitrixCustomerId ${env:Dev_CustomerId_CE1} -citrixClientId ${env:citrixClientId} -CatalogName ${env:IATClient_CatalogName_CE1} -DeliveryGroupName ${env:IATClient_DeliveryGroupName_CE1} -SubscriptionId ${env:PackagingSubscriptionId} -clientId ${env:TF_VAR_client_id} -Tenant ${env:TF_VAR_tenant_id} -resourcegroupname ${env:IATClient_ResourceGroupName_CE1} -CitrixIdpInstanceId ${env:CitrixIdpInstanceId}"
+                            def createVms = runPsWithCreds([[id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'CLIENT_SECRET'],
+                                                            [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
+                                                            [id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
+                            echo createVms
+                            checkPsError(createVms, "Create and add Machines in IAT Machine Catalog")
+
+                        echo "Run Notify-IATUSers.ps1"
+                            psCommand = " ./Notify-IATUSers.ps1 | Out-String"
+                            def notifyiatusers = runPsWithCreds([[id: 'LQKAEZU-Password', type: 'pass', passVar: 'SMTP_PASSWORD'],
+                                                            [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)
+                            echo notifyiatusers
+                            checkPsError(notifyiatusers, "Create and add Machines in IAT Machine Catalog")
+                        }
+                    }catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Create and add Machines in IAT Machine Catalog"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+    }
+// Email Notification
+    post {
+        always {
+            script {
+                echo "${result.retStage}"
+                if (currentBuild.result == 'FAILURE') {
+                    emailext subject: "Build #${currentBuild.number}_SelfService Packaging VM - Failed",
+                    body: """Hi Team,
+ 
+    The build failed for the following VM(s):  
+    Please investigate the failure.
+ 
+    Build was initiated by: ${env.JOB_NAME} Build: ${env.BUILD_ID}
+ 
+    Regards,  
+    Automation Team
+    """,
+                        to: "extern.ahmad_daniyal@allianz.de,extern.ansari_mo-adil@allianz.de",
+                        from: "IAT_VM_CREATION@allianz.de"
+                }
+            }
+        }
+    }
+}

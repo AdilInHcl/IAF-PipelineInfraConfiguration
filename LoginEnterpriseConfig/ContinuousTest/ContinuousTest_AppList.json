@@ -1,0 +1,15 @@
+{
+    "Apps":  [
+                 {
+                     "FamilyId":  "FAM2796",
+                     "IntuneAppName":  "wireshark",
+                     "AOEmail":  [
+                                     "extern.ansari_mo-adil@allianz.de",
+                                     "extern.vandana_pridhviraj1@allianz.de"
+                                 ],
+                     "TestDetail":  [
+
+                                    ]
+                 }
+             ]
+}

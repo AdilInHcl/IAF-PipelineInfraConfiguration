@@ -1,0 +1,153 @@
+def agentName = "prod-agent2"
+def psCommand = ""
+def result = [
+    retcode: 0,
+    retStage: "All Stages Completed",
+    retdescription: "Success"
+]
+// Helper function to use creds (Security purpose)
+def runPsWithCreds(List creds, String pscommand) {
+    def bindings = creds.collect { cred ->
+        if (cred.type == 'pass') {
+            return string(credentialsId: cred.id, variable: cred.passVar)
+        }
+        if (cred.type == 'userpass') {
+            return usernamePassword(credentialsId: cred.id, usernameVariable: cred.userVar, passwordVariable: cred.passVar)
+        }
+        error "Unsupported credential type for ${cred.id}"
+    }
+    return withCredentials(bindings) {
+        def output = powershell(returnStdout: true, script: pscommand).trim()
+        return output
+    }
+}
+// Helper function to catch the error form the powershell scripts
+def checkPsError(output, stageName) {
+    if (!output) return
+
+    if (output.contains("PS_ERROR_DESC=")) {
+        def errorDesc = output.split("PS_ERROR_DESC=")[1].trim()
+        result.retdescription = errorDesc
+        result.retStage = stageName
+        error("Error in ${stageName}: ${errorDesc}")
+    }
+}
+pipeline {
+    agent {
+        label "${agentName}"
+    }
+    environment {  
+        VDI_BUILD_LOCATION_CE2 = "CE2LE"
+        VDI_BUILD_LOCATION_CE1 = "CE1"
+        IAF_JOBNAME = "${params.IAF_JOBNAME}"
+        IAF_BUILD = "${params.IAF_BUILD}"
+        Input_File_name = "LEVMCreationData_${IAF_JOBNAME}_${IAF_BUILD}.json"
+        
+        // Below are the IAF Build Locations 
+        PIPELINE_WORKSPACE = "C:\\IntuneAPPFactory\\_work\\${IAF_JOBNAME}\\${IAF_BUILD}"
+        BUILD_BINARIESDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${IAF_JOBNAME}\\${IAF_BUILD}\\b"
+        BUILD_ARTIFACTSTAGINGDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${IAF_JOBNAME}\\${IAF_BUILD}\\a"
+        BUILD_SOURCESDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${IAF_JOBNAME}\\${IAF_BUILD}\\s"
+    }
+    stages {
+        stage("Read Config and Intialize the environment variables") {
+            steps {
+                dir("configs"){
+                    script {
+                        def imagesettings_CE1 = readJSON file: "${VDI_BUILD_LOCATION_CE1}-STD.json"
+                        def imagesettings_CE2LE = readJSON file: "${VDI_BUILD_LOCATION_CE2}-STD.json"
+
+                        // rg related related info
+                        env.SMTP_USERNAME = "${imagesettings_CE1.SMTP_USERNAME}"
+                        env.APP_CATALOGUE_USERNAME = "${imagesettings_CE1.APP_CATALOGUE_USERNAME}"
+                        env.APP_CATALOGUE_BASE_URL = "${imagesettings_CE1.APP_CATALOGUE_BASE_URL}"
+
+                        // Citrix related info
+                        env.Citrix_CustomerId         = imagesettings_CE2LE.LEcitrixcustomerid
+                        env.LEClient_CatalogName      = imagesettings_CE2LE.LEClient_CatalogName
+                        env.LEClient_DeliveryGroupName= imagesettings_CE2LE.LEDelivery_GroupName
+                        env.SubscriptionId            = imagesettings_CE2LE.LE_subscriptionId
+                        env.ResourceGroupName         = imagesettings_CE2LE.LEResource_GroupName
+                        env.LE_TENANT_ID              = imagesettings_CE2LE.LE_TENANT_ID
+                        env.LE_CLIENT_ID              = imagesettings_CE2LE.LE_CLIENT_ID
+                        env.ARM_CLIENT_ID             = imagesettings_CE2LE.ARM_CLIENT_ID
+                        env.citrixClientId            = imagesettings_CE2LE.citrixClientId
+                        env.CitrixIdpInstanceId       = imagesettings_CE2LE.CitrixIdpInstanceId
+                    }
+                }
+                // Set Environment Variables using PowerShell
+                    echo "Setting environment variables..."
+                    bat '''
+                        powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command Get-ChildItem Env:"
+                    '''
+            }
+        }
+        stage("Create and add Machines in LE Machine Catalog") {
+            steps {
+                script {
+                    try{               
+                        dir("PowerShell") {
+                            psCommand = " ./Citrix-Add-Machine-LEVM.ps1 -CitrixCustomerId ${env:Citrix_CustomerId} -citrixClientId ${env:citrixClientId} -CatalogName ${env:LEClient_CatalogName} -DeliveryGroupName ${env:LEClient_DeliveryGroupName} -Tenant ${env:LE_TENANT_ID} -SubscriptionId ${env:SubscriptionId} -clientId ${env:LE_CLIENT_ID} -resourcegroupname ${env:ResourceGroupName} -CitrixIdpInstanceId ${env:CitrixIdpInstanceId}"
+                            def createVms = runPsWithCreds([[id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'CLIENT_SECRET'],
+                                                            [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
+                                                            [id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
+                            echo createVms
+                            checkPsError(createVms, "Create and add Machines in LE Machine Catalog")
+                        }
+                    }catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Create and add Machines in LE Machine Catalog"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage("Assign LE VMs to the Device Groups") {
+            steps {
+                script {
+                    try{
+                        echo 'Waiting for 5 minutes for the VMs to SYNC in Intune...'
+                        sleep time: 5, unit: 'MINUTES'  
+                        dir("PowerShell") {
+                            psCommand = " ./Assign-DevicesToLEGroups.ps1 -tenantId ${env:LE_TENANT_ID} -clientId ${env:ARM_CLIENT_ID}"
+                            def assigngroups = runPsWithCreds([[id: 'PROD-CLIENT-SECRET', type: 'pass', passVar: 'CLIENT_SECRET'],
+                                                    [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)
+                            echo assigngroups
+                            checkPsError(assigngroups, "Assign LE VMs to the Device Groups")
+                        }
+                    }catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Assign LE VMs to the Device Groups"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+    }
+// Email Notification
+    post {
+        always {
+            script {
+                echo "${result.retStage}"
+             if (currentBuild.result == 'FAILURE') { 
+                    emailext subject: "Build #${currentBuild.number} LE VM - Failed",
+                        body: """Hi Team,
+
+    The build failed to create the VM(s)
+
+    Please investigate the failure.
+
+    Build was initiated by: ${IAF_JOBNAME} Build: ${IAF_BUILD}.
+
+    Regards,  
+    Automation Team;
+                                """,
+                            to: "extern.ahmad_daniyal@allianz.de",
+                        from: "LE_VM_CREATION@allianz.de"  
+                }
+            }
+        }
+    }
+}

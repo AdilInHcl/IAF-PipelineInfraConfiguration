@@ -1,0 +1,292 @@
+def checkVar = "yes"
+def agentName = "prod-agent2"
+def psCommand = ""
+def result = [
+    retcode: 0,
+    retStage: "All Stages Completed",
+    retdescription: "Success"
+]
+// Helper function to use creds (Security purpose)
+def runPsWithCreds(List creds, String pscommand) {
+    def bindings = creds.collect { cred ->
+        if (cred.type == 'pass') {
+            return string(credentialsId: cred.id, variable: cred.passVar)
+        }
+        if (cred.type == 'userpass') {
+            return usernamePassword(credentialsId: cred.id, usernameVariable: cred.userVar, passwordVariable: cred.passVar)
+        }
+        error "Unsupported credential type for ${cred.id}"
+    }
+    return withCredentials(bindings) {
+        def output = powershell(returnStdout: true, script: pscommand).trim()
+        return output
+    }
+}
+// Helper function to catch the error form the powershell scripts
+def checkPsError(output, stageName) {
+    if (!output) return
+
+    if (output.contains("PS_ERROR_DESC=")) {
+        def errorDesc = output.split("PS_ERROR_DESC=")[1].trim()
+        result.retdescription = errorDesc
+        result.retStage = stageName
+        error("Error in ${stageName}: ${errorDesc}")
+    }
+}
+pipeline {
+    agent {
+        label "${agentName}"
+    }
+    environment {
+
+        BUILD_LOCATION_CE1 = "CE1"
+        VDI_BUILD_LOCATION_CE2 = "CE2LE"
+        ARCHIVESTORAGEACCOUNTNAME = "packageshareprod"
+        ARCHIVECONTAINERNAME = "lereports"
+        PIPELINE_WORKSPACE = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}"
+        BUILD_SOURCESDIRECTORY = "${env.PIPELINE_WORKSPACE}\\s"
+        BUILD_ARTIFACTSTAGINGDIRECTORY = "${env.PIPELINE_WORKSPACE}\\a"
+        BUILD_BINARIESDIRECTORY = "${env.PIPELINE_WORKSPACE}\\b"
+        Script_Path = "${env.BUILD_SOURCESDIRECTORY}\\LoginEnterpriseConfig\\Scripts"
+        LEConfigJsonPath = "${HOMEDRIVE}\\LESmokeTestData\\"
+        ScanPipelineBuildTag = "${params.ScanPipelineBuildTag}" //required in notification
+        ScanFolder = "${HOMEDRIVE}\\SCANS\\"           //required in notification
+        LEScanFolder = "${env.ScanFolder}SmokeTest\\"  //required in notification
+        LETestSuiteJsonPath = "${env.LEConfigJsonPath}StageResult\\"
+        LETestSuiteJsonFile = "${env.LETestSuiteJsonPath}${params.LETestSuiteJsonFile}"  // output file of testsuite creation pipeline      
+        LESmokeTestResultFile = "${env.JOB_NAME}_${env.BUILD_ID}_SmokeTestExecutionResult.json"  // this is for email
+
+        LE_Test_Re_Run_MaxLimit = 5 
+        Password = credentials("TMU-EU-AVC023")     //this need to be azure vault
+        GIT_PAT = credentials("PROD-NOREPLY-PAT") // Github PAT/Key
+
+        // //Input coming from IAF piepline
+        IAF_JOBNAME = "${params.IAF_JOBNAME}"
+        IAF_BUILD = "${params.IAF_BUILD}"
+        IAF_BUILD_BINARIESDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${IAF_JOBNAME}\\${IAF_BUILD}\\b"
+        Input_File_name = "LEVMCreationData_${IAF_JOBNAME}_${IAF_BUILD}.json" // LE Vm info file
+        
+    }
+    stages {
+        stage("Initialize and Setup") {
+            steps {
+                dir("configs"){
+                    script {
+                        def configFile = "${VDI_BUILD_LOCATION_CE2}-STD.json"
+                        def config = readJSON file: configFile
+
+                        // Validate and assign to env to make them available globally
+                        def required = [
+                            'LEcitrixcustomerid', 'LEClient_CatalogName', 'LEDelivery_GroupName',
+                            'LE_subscriptionId', 'LEResource_GroupName', 
+                            // 'ARM_CLIENT_ID',
+                            'LE_TENANT_ID', 'LE_CLIENT_ID', 'citrixClientId', 'CitrixIdpInstanceId'
+                        ]
+                        required.each {
+                            if (!config[it]?.trim()) {
+                                error "Missing or empty value for key '${it}' in config"
+                            }
+                        }
+
+                        // Assign to env
+                        env.Citrix_CustomerId         = config.LEcitrixcustomerid
+                        env.LEClient_CatalogName      = config.LEClient_CatalogName
+                        env.LEClient_DeliveryGroupName= config.LEDelivery_GroupName
+                        env.SubscriptionId            = config.LE_subscriptionId
+                        env.ResourceGroupName         = config.LEResource_GroupName
+                        env.LE_TENANT_ID              = config.LE_TENANT_ID
+                        env.LE_CLIENT_ID              = config.LE_CLIENT_ID
+                        //env.ARM_CLIENT_ID           = config.ARM_CLIENT_ID
+                        env.citrixClientId            = config.citrixClientId
+                        env.CitrixIdpInstanceId       = config.CitrixIdpInstanceId
+                        env.LE_ContiTest_Owner = config.LE_ContiTest_Owner
+                        env.LE_ContiTest_Repo = config.LE_ContiTest_Repo
+                        env.LE_ContiTest_Branch  = config.LE_ContiTest_Branch
+                        env.LE_ContiTest_AppListJson  = config.LE_ContiTest_AppListJson
+                        env.LE_API_Base_Url = config.LE_API_Base_Url
+                        env.LETestVM = config.LETestVM
+                        
+                        // Set Catalogue Credentials from Config
+                        env.APP_CATALOGUE_USERNAME = config.APP_CATALOGUE_USERNAME  // Changed key name
+                        env.APP_CATALOGUE_BASE_URL = config.AppCatalogueAPIBaseURL
+
+                    }
+                }
+                script{
+                    // Create the artifact folder for LE API Logs
+                    ["a\\LEAPILogs"].each { subPath ->
+                        def fullPath = "${env.PIPELINE_WORKSPACE}\\${subPath}"
+
+                        if (!fileExists(fullPath)) {
+                            echo "Creating directory: ${fullPath}"
+                            bat "mkdir \"${fullPath}\""
+                        } else {
+                            echo "Directory already exists: ${fullPath}"
+                        }
+                    }
+                }
+                // Delete the last eight builds and cleanup folders
+                dir("Scripts") {
+                    script{
+                        psCommand = ''' ./Remove-Files.ps1 | Out-String'''
+                        def removeFilesOutput = powershell(returnStdout: true, script: psCommand).trim()
+                            echo removeFilesOutput
+                            checkPsError(removeFilesOutput, "Initialize and Setup")
+                    }
+                }
+            }
+        }
+        stage("clear Integrity Log") {
+            steps {
+                script {
+                try{             
+                    echo "Running Powershell script to clear Code Integrity Logs"
+                    dir("PowerShell") {
+                        echo "Turn On Vms if in Power Off state..."
+                            psCommand = ''' ./TurnOn-LEVM.ps1 -CitrixCustomerId ${env:Citrix_CustomerId} -citrixClientId ${env:citrixClientId} '''
+                            def turnonvm = runPsWithCreds([[id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
+                            echo turnonvm
+                            checkPsError(turnonvm, "Turn On Vms if in Power Off state")
+                            
+                        echo "Clear Code Integrity Logs..."
+                            psCommand = ''' ./CodeIntegrityLogs.ps1 -TenantId ${env:LE_TENANT_ID} -SubscriptionId ${env:SubscriptionId} -rgName ${env:ResourceGroupName} -ClientId ${env:LE_CLIENT_ID} '''
+                            def codeintrgity = runPsWithCreds([ [id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'PROD_CLIENT_SECRET_LE']], psCommand)
+                            echo codeintrgity
+                            checkPsError(codeintrgity, "Clear Code Integrity Logs")
+                      }
+                }
+                catch(Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "clear Code Integrity Logs"
+                        error("Result: ${result}")                                         
+                 }
+                }
+            }
+        }
+        stage('Execute Test Suite and Polling Test Result Iteratively') {
+            steps {
+
+                script {
+                 try {
+                    def maxRuns = env.LE_Test_Re_Run_MaxLimit.toInteger()
+                    def currentRun = 1
+                    def continueLoop = true
+                    while (currentRun <= maxRuns && continueLoop) {
+
+                        echo "========== Iteration ${currentRun} of ${maxRuns} =========="
+                        //echo "[${currentRun}] Running Reboot_LE_SmokeTest_VM.ps1..."
+                        dir("PowerShell") {
+                            
+                                echo "Turn On Vms if in Power Off state..."
+                                psOnCommand = ''' ./TurnOn-LEVM.ps1 -CitrixCustomerId ${env:Citrix_CustomerId} -citrixClientId ${env:citrixClientId} '''
+                                def turnonvm = runPsWithCreds([[id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psOnCommand)
+                                echo turnonvm
+                                checkPsError(turnonvm, "Power On LE VMs")
+                        }
+                        dir("LoginEnterpriseConfig") {
+
+                                echo "[${currentRun}] Running Reboot_LE_SmokeTest_VM.ps1 to reboot the VM and check the status..."
+                                psCommand = """ ./Scripts/Reboot_LE_SmokeTest_VM.ps1 -SubscriptionId ${env:SubscriptionId} -ClientId ${env:LE_CLIENT_ID} -TenantId ${env:LE_TENANT_ID} -ResourceGroupName ${env:ResourceGroupName} """
+                                def rebootLEVM = runPsWithCreds([[id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'PROD_CLIENT_SECRET_LE']], psCommand)
+                                echo rebootLEVM
+                                checkPsError(rebootLEVM, "Reboot LE VMs")
+                        }                       
+                        sleep(time: 10, unit: 'MINUTES')
+                        dir("LoginEnterpriseConfig") {
+                            echo "[${currentRun}] Running ExecuteTestSuite.ps1..."
+
+                                psCommand = """ ./Scripts/ExecuteTestSuite_Re_Run.ps1 -LE_Test_Re_Run_MaxLimit ${maxRuns} -LE_Test__CurrentRun ${currentRun} """
+                                def triggerOutput = runPsWithCreds([[id: 'PROD-SA-SECRET', type: 'pass', passVar: 'PROD_SA_SECRET'],[id: 'PROD-LE-Config-Token', type: 'pass', passVar: 'LE_Config_Token'],
+                                                                    [id: 'PROD-LE-Read-Token', type: 'pass', passVar: 'LE_Read_Token'],[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)
+                                echo triggerOutput
+                                checkPsError(triggerOutput, "Execute Test Suite")
+                        }
+                        
+                        dir("LoginEnterpriseConfig") {
+                            echo "[${currentRun}]  Running PollLEResult.ps1 to fetch executeed Test-Suites status..."
+                                psCommand = """ ./Scripts/PollLEResult_Re_Run.ps1 -LE_Test_Re_Run_MaxLimit ${maxRuns} -LE_Test__CurrentRun ${currentRun} """
+                                def pollResultOutput = runPsWithCreds([[id: 'PROD-SA-SECRET', type: 'pass', passVar: 'PROD_SA_SECRET'],[id: 'PROD-LE-Config-Token', type: 'pass', passVar: 'LE_Config_Token'],
+                                                                    [id: 'PROD-LE-Read-Token', type: 'pass', passVar: 'LE_Read_Token'],[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)           
+                                echo pollResultOutput
+                                checkPsError(pollResultOutput, "Poll to fetch executeed Test-Suites status")
+                        }
+                        
+                        currentRun++
+                        // Sleep for 30 minutes (30 minutes * 60 seconds * 1000 milliseconds)
+                        if(currentRun <= maxRuns){
+                          sleep(time: 10, unit: 'MINUTES')
+                        }
+                        // Main script execution
+                        echo "Delay complete. Triggering PROD_EXECUTE_LE_TESTSUITE again."
+                    }
+                }
+                catch(Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Reboot LE VM, Execute Test Suite and Polling Test Result"
+                        error("Result: ${result}")                                         
+                 }
+                }
+            }
+
+        }
+        stage('Verify App Installation on VMs') {
+            steps {
+                script {
+                    try {                       
+                        dir("LoginEnterpriseConfig") {
+                            echo "Verifying app installation on VMs remotely..."
+                            psCommand = ''' ./Scripts/Verify-AppInstallation-OnVM.ps1 -SubscriptionId ${env:SubscriptionId} -ClientId ${env:LE_CLIENT_ID} -TenantId ${env:LE_TENANT_ID} -ResourceGroupName ${env:ResourceGroupName} '''
+                            def verificationOutput = runPsWithCreds( [[id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'PROD_CLIENT_SECRET_LE']], psCommand)
+                            echo verificationOutput
+                            checkPsError(verificationOutput, "Verify App Installation on VMs")
+
+                            if (verificationOutput.contains("No Apps were installed")) {
+                                ///// Any Logic ////
+                                checkVar = 'no'
+                            }
+                        }
+                        
+                        echo "App installation verification completed"
+                        
+                    } catch(Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Verify App Installation on VMs"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Initiate Security Scan pipeline') {
+            when {
+                expression { return checkVar == 'yes'}
+            }
+            steps {
+                script {
+                    try{
+                        // Use the filtered SecurityScan_Input.json instead of original smoke test result
+                        build job: 'SCAN_LE_SMOKETEST_VM',
+                            wait: false,
+                            parameters: [
+                                string(name: 'LE_SmokeTestResult', value: env.LESmokeTestResultFile),
+                                string(name: 'IAF_JOBNAME', value: env.IAF_JOBNAME),
+                                string(name: 'IAF_BUILD', value: env.IAF_BUILD)
+                            ]
+                    }
+                    catch(Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Initiate Security Scan pipeline"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }       
+    }
+}
+
+
+
+ 

@@ -1,0 +1,352 @@
+def agentName = "prod-agent2" // Replace with your agent label
+def result = [
+    retcode: 0,
+    retStage: "All Stages Completed",
+    retdescription: "Success"
+]
+// Helper function to use creds (Security purpose)
+def runPsWithCreds(List creds, String pscommand) {
+    def bindings = creds.collect { cred ->
+        if (cred.type == 'pass') {
+            return string(credentialsId: cred.id, variable: cred.passVar)
+        }
+        if (cred.type == 'userpass') {
+            return usernamePassword(credentialsId: cred.id, usernameVariable: cred.userVar, passwordVariable: cred.passVar)
+        }
+        error "Unsupported credential type for ${cred.id}"
+    }
+    return withCredentials(bindings) {
+        def output = powershell(returnStdout: true, script: pscommand).trim()
+        return output
+    }
+}
+// Helper function to catch the error form the powershell scripts
+def checkPsError(output, stageName) {
+    if (!output) return
+
+    if (output.contains("PS_ERROR_DESC=")) {
+        def errorDesc = output.split("PS_ERROR_DESC=")[1].trim()
+        result.retdescription = errorDesc
+        result.retStage = stageName
+        error("Error in ${stageName}: ${errorDesc}")
+    }
+}
+pipeline { 
+    agent { 
+        label "${agentName}" 
+    } 
+    parameters {
+        string(name: 'IntuneAppName', defaultValue: '', description: 'Enter Intune AppName')
+        string(name: 'FamilyID', defaultValue: '', description: 'Enter the Family ID')
+        string(name: 'ContinuousTestName', defaultValue: '', description: 'Enter the Continuous Test Name')
+        // string(name: 'OE', defaultValue: '', description: 'Enter the OE Name')
+    }
+    environment { 
+    BUILD_LOCATION_CE1 = "CE1"   
+    VDI_BUILD_LOCATION_CE2 = "CE2LE" 
+    PROD_SA_SECRET= credentials("PROD-SA-SECRET")  //storage account access key
+    ARCHIVESTORAGEACCOUNTNAME ="packageshareprod" // storage account name
+    ARCHIVECONTAINERNAME = "lereports" // contaner name        
+    PROD_CLIENT_SECRET = credentials("PROD-CLIENT-SECRET")
+    PIPELINE_WORKSPACE = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}" 
+    BUILD_SOURCESDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}\\s"
+    BUILD_ARTIFACTSTAGINGDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}\\a"
+    BUILD_BINARIESDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}\\b"
+    Script_Path = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}\\s\\LoginEnterpriseConfig\\Scripts"        
+    
+    ScanFolder = "${HOMEDRIVE}\\SCANS\\"           //required in notification
+    LEScanFolder = "${env.ScanFolder}SmokeTest\\"  //required in notification
+    IAF_JOBNAME = "${params.IAF_JOBNAME}"
+    IAF_BUILD = "${params.IAF_BUILD}"
+    ScanPipelineBuildTag = "${IAF_JOBNAME}_${IAF_BUILD}"
+    Input_File_name = "LEVMCreationData_${IAF_JOBNAME}_${IAF_BUILD}.json" // LE Vm info file
+    
+    LEConfigJsonPath = "${HOMEDRIVE}\\LESmokeTestData\\"
+
+    LESmokeTestResultFile = "PROD_LE_TESTSUITE_EXECUTION_310_SmokeTestExecutionResult.json" //required in notification
+    //LESmokeTestVMCreation = "${HOMEDRIVE}\\LEVMCreationData\\"
+    LESmokeTestVMCreation = "C:\\IntuneAPPFactory\\_work\\PROD_Intune_App_Factory_E2E\\58\\b\\"
+    Input_File_Name_fromVM_Creation = "LEVMCreationData_PROD_Intune_App_Factory_E2E_58.json" //required in notification
+    WDACScanResultFolder="${env.ScanFolder}WDAC\\jenkins-PROD_LE_SMOKETEST_VM_SECURITY_SCANS-55\\" //required in notification
+    Input_File_Name_from_WDAC_Scan = "PROD_LE_SMOKETEST_VM_SECURITY_SCANS_55_WDAC_Result_.json"
+    QualysScanResult="${env.ScanFolder}Qualys\\jenkins-PROD_LE_SMOKETEST_VM_SECURITY_SCANS-55\\" //required in notification
+    CrowdstrikeScanResult="${env.ScanFolder}Crowdstrike\\jenkins-PROD_LE_SMOKETEST_VM_SECURITY_SCANS-55\\" //required in notification
+    
+    //ContinuousTestResult="${env.ScanFolder}ContinuousTest\\${env.ScanPipelineBuildTag}\\" 
+    ContinuousTestResultPath="${env.ScanFolder}ContinuousTest\\" //required in notification
+    Input_File_Name_from_ContinuousTest = "PROD_LE_TESTSUITE_EXECUTION_259_ContinuousTestResult.json"
+    
+
+    Password = credentials("TMU-EU-AVC023")
+    GIT_PAT = credentials("PROD-NOREPLY-PAT") // Github PAT/Key
+    LE_Test_Re_Run_MaxLimit = 5
+}
+
+    stages {
+        stage("Initialize and Setup") {
+            steps {
+                dir("configs"){
+                    script {
+                        def configFile = "${VDI_BUILD_LOCATION_CE2}-STD.json"
+                        def config = readJSON file: configFile
+
+                        // Validate and assign to env to make them available globally
+                        def required = [
+                            'LE_ContiTest_Owner', 'LE_ContiTest_Repo', 'LE_ContiTest_Branch',
+                            'LE_ContiTest_AppListJson'
+                        ]
+                        required.each {
+                            if (!config[it]?.trim()) {
+                                error "Missing or empty value for key '${it}' in config"
+                            }
+                        }
+
+                        // Assign to env
+                        
+                        env.LE_ContiTest_Owner       = config.LE_ContiTest_Owner
+                        env.LE_ContiTest_Repo        = config.LE_ContiTest_Repo
+                        env.LE_ContiTest_Branch      = config.LE_ContiTest_Branch
+                        env.LE_ContiTest_AppListJson = config.LE_ContiTest_AppListJson
+                        env.LE_API_Base_Url          =   config.LE_API_Base_Url
+                    }
+                }
+                script {
+                   
+                    // Verify Environment Setup
+                    echo "Initializing job with environment variables:-"
+                    def envVars = [
+                        "PIPELINE_WORKSPACE",
+                        "BUILD_SOURCESDIRECTORY"
+                    ]
+
+                    envVars.each { envVar ->
+                        echo "${envVar}=${env[envVar]}"
+                    }
+
+                    // Set Environment Variables using PowerShell
+                    echo "Setting environment variables..."
+                    bat '''
+                        powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$env:BUILD_SOURCESDIRECTORY = '${BUILD_SOURCESDIRECTORY}'; $env:PIPELINE_WORKSPACE = '${PIPELINE_WORKSPACE}'; Get-ChildItem Env:"
+                    '''
+
+                    // Create Required Directories
+                    def basePath = "${PIPELINE_WORKSPACE}\\"
+                    def directories = ['a\\LEAPILogs', 'b']
+                    directories.each { dirName ->
+                        def directoryPath = "${basePath}${dirName}"
+                        echo "Checking directory: ${directoryPath}"
+
+                        if (!fileExists(directoryPath)) {
+                            echo "Creating directory: ${directoryPath}"
+                            bat "mkdir \"${directoryPath}\""
+                        } else {
+                            echo "Directory already exists: ${directoryPath}"
+                        }
+                    }
+
+                    // Clone Repository
+                    echo "Cloning repository into ${BUILD_SOURCESDIRECTORY}..."
+                    dir("${BUILD_SOURCESDIRECTORY}") {
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: [[name: '*/main']], // Update with correct branch name
+                            userRemoteConfigs: [[
+                                url: 'https://github.developer.allianz.io/WorkplaceServices/IAF-PipelineInfraConfiguration.git',
+                                credentialsId: "tu-lmvnqin-GITHUB-PAT"
+                            ]]
+                        ])
+                    }
+                }
+            }
+        }
+        // stage('Validate Parameters') {
+        //     steps {
+        //         script {
+        //             def intuneAppName = params.IntuneAppName.trim()
+        //             def familyID = params.FamilyID.trim()
+        //             def continuousTestName = params.ContinuousTestName.trim()
+
+        //             def isValid = false
+        //             while (!isValid) {
+        //                 try {
+        //                     // Define a function to validate parameter values
+        //                     def validateParameter = { paramName, paramValue ->
+        //                         if (paramValue.trim().isEmpty()) {
+        //                             error("Parameter '${paramName}' is required and cannot be empty.")
+        //                         }
+        //                         // if (paramValue.contains(' ')) {
+        //                         //     error("Parameter '${paramName}' cannot contain spaces.")
+        //                         // }
+        //                     }
+
+        //                     // Validate each parameter
+        //                     validateParameter('IntuneAppName', intuneAppName)
+        //                     validateParameter('FamilyID', familyID)
+        //                     validateParameter('ContinuousTestName', continuousTestName)
+        //                     // validateParameter('OE', oe)
+
+        //                     // If all validations pass, set isValid to true
+        //                     isValid = true
+        //                 } catch (Exception e) {
+        //                     // Print error message and prompt for input again
+        //                     echo "Validation Error: ${e.message}"
+        //                     def userInput = input(
+        //                         id: 'userInput', message: 'Please provide valid values:', parameters: [
+        //                             string(name: 'IntuneAppName', defaultValue: intuneAppName, description: 'Enter Intune AppName (No spaces allowed)'),
+        //                             string(name: 'FamilyID', defaultValue: familyID, description: 'Enter the Family ID (No spaces allowed)'),
+        //                             string(name: 'ContinuousTestName', defaultValue: continuousTestName, description: 'Enter the Continuous Test Name (No spaces allowed)')
+        //                             // string(name: 'OE', defaultValue: oe, description: 'Enter the OE Name (No spaces allowed)')
+        //                         ]
+        //                     )
+
+        //                     // Update variables with new input
+        //                     intuneAppName = userInput['IntuneAppName'].trim()
+        //                     familyID = userInput['FamilyID'].trim()
+        //                     continuousTestName = userInput['ContinuousTestName'].trim()
+        //                     // oe = userInput['OE']
+        //                 }
+        //             }
+
+        //             // setting up user inputs in env variables 
+        //             env.intuneAppName = intuneAppName
+        //             env.familyID = familyID
+        //             env.continuousTestName = continuousTestName
+        //             // env.oe = oe
+        //         }
+        //     }
+        // }
+        // stage('Onboard App in Continuous Test') {
+        //     when {
+        //         expression {
+        //             def buildCause = currentBuild.getBuildCauses().toString()
+        //             return buildCause.contains('UserIdCause') // Execute if manually triggered
+        //         }
+        //     }
+        //     steps {
+        //         script {
+        //             try {
+        //                 // Print the inputs
+        //                 echo "Intune App Name: ${env.intuneAppName}"
+        //                 echo "Family ID: ${env.familyID}"
+        //                 echo "Continuous Test Name: ${env.continuousTestName}"
+
+        //                 echo "Running AddContinuousTestName.ps1 script..."
+        //                 // Run the PowerShell script and capture its output
+        //                 //-intuneAppName ${intuneAppName} -familyID ${familyID} -continuousTestName ${continuousTestName}
+        //                 def scriptOutput = bat(
+        //                     returnStdout: true,
+        //                     script: """
+        //                         powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Unrestricted -Command "& { . '${env.BUILD_SOURCESDIRECTORY}\\LoginEnterpriseConfig\\Scripts\\AddContinuousTestName.ps1' }| Out-String"
+        //                     """
+        //                 ).trim()
+
+
+        //                 echo "Output from AddContinuousTestName.ps1:"
+        //                 echo scriptOutput
+        //                 //Check for PowerShell error marker
+        //                 if (scriptOutput.contains("PS_ERROR_DESC=")) {
+        //                         errorDesc = scriptOutput.split("PS_ERROR_DESC=")[1].trim()
+        //                         result.retdescription = "${errorDesc}"
+        //                         error("${result.retdescription}")
+        //                 }
+        //                 }
+        //                 catch(Exception ex) {
+        //                     result.retcode = 1
+        //                     result.retdescription = "${ex.getMessage()}"
+        //                     result.retStage = "checked the existing App in LE and New Apps List in AppJson file"
+        //                     error("Result: ${result}")                                         
+        //             }
+        //          }                
+        //     }   
+        // }
+        
+        stage('Poll Continuous Test Results') {
+            //  when {
+            //     expression {
+            //         def buildCause = currentBuild.getBuildCauses().toString()
+            //         return buildCause.contains('TimerTriggerCause') // Execute if scheduled
+            //     }
+            // }
+            steps {
+                script {
+                    try {
+
+                    def maxRuns = env.LE_Test_Re_Run_MaxLimit.toInteger()
+                    def currentRun = 1
+                    def continueLoop = true
+ 
+                    while (currentRun <= maxRuns && continueLoop) {
+
+                        dir("LoginEnterpriseConfig") {
+                            echo "Running ContinuousTestResult.ps1 script..."
+                            // Run the PowerShell script and capture its output
+                            psCommand = """ ./Scripts/ContinuousTestResult.ps1 -LE_Test_Re_Run_MaxLimit ${maxRuns} -LE_Test__CurrentRun ${currentRun} """
+                            def triggerOutput = runPsWithCreds([[id: 'PROD-LE-Config-Token', type: 'pass', passVar: 'LE_Config_Token'],
+                                                                    [id: 'PROD-LE-Read-Token', type: 'pass', passVar: 'LE_Read_Token']], psCommand)
+                            
+                            checkPsError(triggerOutput, "Poll Continuous Test Results")
+                            echo "Output from ContinuousTestResult.ps1:"
+                            echo triggerOutput
+                           }
+                            
+                            currentRun++
+                            // Sleep for 30 minutes (30 minutes * 60 seconds * 1000 milliseconds)
+                            if(currentRun <= maxRuns)
+                            {
+                            sleep(time: 5, unit: 'MINUTES')
+                            // Main script execution
+                            // performTaskWithCountdown()
+                            echo "Delay complete. Triggering ContinuousTestResult again."
+                            }
+                    }
+                    }
+                    catch(Exception ex) {
+                            result.retcode = 1
+                            result.retdescription = "${ex.getMessage()}"
+                            result.retStage = "checked the existing App in LE and New Apps List in AppJson file"
+                            error("Result: ${result}")                                         
+                    }
+
+                    
+                }
+            }
+        }
+        stage("Combined Email Notification") {
+            steps {
+                script { 
+                    try {              
+                        echo "Running Powershell script to send email notification with IAT/AO template selection"
+                        
+                        // Set App Catalogue credentials as environment variables for the PowerShell script
+                        withEnv([
+                            "APP_CATALOGUE_BASE_URL=https://wps-appcatalogue.allianz.com/api/v1",
+                            "APP_CATALOGUE_USERNAME=IAF_Test_User1",
+                            "APP_CATALOGUE_PASSWORD=Go2Sleep",
+                            "WORKSPACE=${BUILD_SOURCESDIRECTORY}",
+                            "Password_PSW=${env.Password}"
+                        ]) {
+                            dir("PowerShell") {
+                                echo "Sending email notification"
+                                psCommand = " ./Send-FinalEmail-Notificationtest.ps1 | Out-String"
+                                def scriptOutput = powershell(returnStdout: true, script: psCommand).trim()
+                                
+                                echo "Email notification output:"
+                                echo scriptOutput
+                                
+                                // Check for PowerShell error marker
+                                checkPsError(scriptOutput, "Combined Email Notification")
+                            }
+                        }
+                    }
+                    catch(Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Combined Email notification for smoke test and security scans"
+                        error("Result: ${result}")                                         
+                    }
+                }
+            }
+        }
+    }
+}
+

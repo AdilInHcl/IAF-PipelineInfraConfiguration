@@ -1,0 +1,103 @@
+{
+    "SharePointCatalogue": {
+        "Description": "Email configuration details to send email to sharepoint in PROD instance for App ID creation",       
+        "To":  [
+            "noreply-wps-apm@allianz.com"
+        ],
+        "CC":  [
+            "JOHN.VARGHESE@ALLIANZ.COM",
+            "JAIMY.ABRAHAM1@ALLIANZ.COM",
+            "extern.ahmad_daniyal@allianz.de",
+            "extern.ansari_mo-adil@allianz.de"
+        ]		
+    },
+    "EmailToApplicationOwner": {
+        "Description": "Email configuration details to send email to AO & OPS team when a new evergreen version identified",       
+        "To":  [
+            "ApplicationOwner E-mail will come from App.json"
+        ],
+        "CC":  [
+            "APP-CONVERSION@allianz.com",
+            "avc-hcl-packaging@allianz.com",
+            "wps-apm-engineering@allianz.com"
+        ]		
+    },
+    "EmailToHCLTeam": {
+        "Description": "Email configuration details utilize to send notifications to HCL automation, packaging and operations team.",     
+        "To":  [
+            "a-hcl-global-automation@allianz.com",
+            "avc-hcl-packaging@allianz.com",
+            "amc-avcc-app-operationalsupport@allianz.com"
+
+        ],
+        "CC":  [
+           "APP-CONVERSION@allianz.com",
+           "wps-apm-engineering@allianz.com"
+        ]		
+    },
+    "HCLWPSTestTeam": {  
+        "Description": "Email configuration details utilize to send notifications to HCL WPS Test team regrding the Continuoust Test actions.",      
+        "To":  [
+        "hcl-wps-testing@allianz.com"
+        ],
+        "CC":  [
+            "APP-CONVERSION@allianz.com",
+            "avc-hcl-packaging@allianz.com",
+            "amc-avcc-app-operationalsupport@allianz.com",
+            "wps-apm-engineering@allianz.com"
+        ]	
+    },
+    "IAFPipelineSuccessNotification": {
+        "Description": "Email configuration details utilize to send notifications to AO specific to App after successful smoke test and security scans.",        
+        "To":  [
+            "ApplicationOwner E-mail will come from App.json"
+        ],
+        "CC":  [
+            "avc-hcl-packaging@allianz.com",
+            "amc-avcc-app-operationalsupport@allianz.com",
+            "APP-CONVERSION@allianz.com"
+        ]		
+    },
+    "IAFPipelineFailureNotification": {
+        "Description": "Email configuration details utilize to send notifications HCL operations and packaging team in case of any failure in pipeline",       
+        "To":  [
+            "avc-hcl-packaging@allianz.com",
+            "amc-avcc-app-operationalsupport@allianz.com"
+        ],
+        "CC":  [
+             "APP-CONVERSION@allianz.com",
+             "wps-apm-engineering@allianz.com",
+             "a-hcl-global-automation@allianz.com"
+        ]		
+    },
+    "IAFModuleUpdate": {  
+        "Description": "Email configuration details utilize to send notifications to automation team when Evergreen, IntuneWin32, MSGRaphRequest module update will come.",      
+        "To":  [
+            "a-hcl-global-automation@allianz.com"
+        ],
+        "CC":  [
+            "APP-CONVERSION@allianz.com",
+            "wps-apm-engineering@allianz.com"
+        ]		
+    },
+    "IAFAppPublishStatus": {  
+        "Description": "Email configuration details utilize to send notifications to automation team for app publish status.",      
+        "To":  [
+            "a-hcl-global-automation@allianz.com",          
+            "amc-avcc-app-operationalsupport@allianz.com",
+            "avc-hcl-packaging@allianz.com"
+
+        ],
+        "CC": [
+            "wps-apm-engineering@allianz.com",
+            "APP-CONVERSION@allianz.com",
+            "extern.ansari_mo-adil@allianz.de",
+            "extern.ahmad_daniyal@allianz.de",
+            "extern.vandana_pridhviraj1@allianz.de",
+            "kumar.san@hcltech.com",
+            "ivan.bakhmutov@hcltech.com",
+            "german.simonson@hcltech.com",
+            "carsten.lahme@hcltech.com"
+        ]		
+    }
+}

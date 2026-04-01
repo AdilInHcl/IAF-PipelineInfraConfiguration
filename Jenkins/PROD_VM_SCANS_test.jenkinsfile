@@ -1,0 +1,409 @@
+def agentName = "prod-agent2"
+def IATVMs = "yes"
+def result = [
+    retcode: 0,
+    retStage: "All Stages Completed",
+    retdescription: "Success"
+]
+def psCommand = ""
+// Helper function to use creds (Security purpose)
+def runPsWithCreds(List creds, String pscommand) {
+    def bindings = creds.collect { cred ->
+        if (cred.type == 'pass') {
+            return string(credentialsId: cred.id, variable: cred.passVar)
+        }
+        if (cred.type == 'userpass') {
+            return usernamePassword(credentialsId: cred.id, usernameVariable: cred.userVar, passwordVariable: cred.passVar)
+        }
+        error "Unsupported credential type for ${cred.id}"
+    }
+    return withCredentials(bindings) {
+        def output = powershell(returnStdout: true, script: pscommand).trim()
+        return output
+    }
+}
+// Helper function to catch the error form the powershell scripts
+def checkPsError(output, stageName) {
+    if (!output) return
+
+    if (output.contains("PS_ERROR_DESC=")) {
+        def errorDesc = output.split("PS_ERROR_DESC=")[1].trim()
+        result.retdescription = errorDesc
+        result.retStage = stageName
+        error("Error in ${stageName}: ${errorDesc}")
+    }
+}
+pipeline {
+    agent {
+        label "${agentName}"
+    }   
+    environment {  
+        VDI_BUILD_LOCATION_CE2LE = "CE2LE"
+        VDI_BUILD_LOCATION_CE1 = "CE1"
+       
+        // // Below are the IAF Build Locations that triggered this pipeline.
+        // IAF_JOBNAME = "${params.IAF_JOBNAME}"
+        // IAF_BUILD = "${params.IAF_BUILD}"
+        // LE_SmokeTestResult = "${params.LE_SmokeTestResult}" // LE smoke test results
+
+        IAF_JOBNAME = "IAF_Intune_App_Factory_E2E"
+        IAF_BUILD = "19"
+        LE_SmokeTestResult = "ST_LE_TESTSUITE_EXECUTION_21_SmokeTestExecutionResult.json" // LE smoke test results
+
+        Input_File_name = "LEVMCreationData_${IAF_JOBNAME}_${IAF_BUILD}.json" // LE Vm info file
+        
+        PIPELINE_WORKSPACE = "C:\\IntuneAPPFactory\\_work\\${IAF_JOBNAME}\\${IAF_BUILD}"
+        BUILD_BINARIESDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${IAF_JOBNAME}\\${IAF_BUILD}\\b"
+        BUILD_ARTIFACTSTAGINGDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${IAF_JOBNAME}\\${IAF_BUILD}\\a"
+        BUILD_SOURCESDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${IAF_JOBNAME}\\${IAF_BUILD}\\s"
+    }
+    stages {
+        stage("Read Config and Intialize the environment variables") {
+            steps {
+                dir("configs"){
+                    script {
+                        def configCE2LE = readJSON file: "${VDI_BUILD_LOCATION_CE2LE}-STD.json"
+                        def configCE1 = readJSON file: "${VDI_BUILD_LOCATION_CE1}-STD.json"
+
+                        //RG related Related info
+                        env.APP_CATALOGUE_USERNAME = configCE1.APP_CATALOGUE_USERNAME
+                        env.ARCHIVESTORAGEACCOUNTNAME = configCE1.ARCHIVESTORAGEACCOUNTNAME
+                        env.QUALYSARCHIVECONTAINERNAME = configCE1.QUALYSARCHIVECONTAINERNAME
+                        env.CROWDSTRIKECONTAINERNAME = configCE1.CROWDSTRIKECONTAINERNAME
+                        env.QUALYS_REPORT_BLOBNAME_FOLDER = configCE1.QUALYS_REPORT_BLOBNAME_FOLDER
+                        env.CROWDSTRIKE_BLOBNAME_FOLDER = configCE1.CROWDSTRIKE_BLOBNAME_FOLDER
+                        env.BASELINE_BLOBNAME_FOLDER = configCE1.BASELINE_BLOBNAME_FOLDER
+                        env.ARM_TENANT_ID = configCE1.ARM_TENANT_ID
+                        env.ARM_CLIENT_ID = configCE1.ARM_CLIENT_ID
+                        env.SMTP_USERNAME = configCE1.SMTP_Username
+                        env.APP_CATALOGUE_BASE_URL = configCE1.APP_CATALOGUE_BASE_URL
+
+                        //Ctrix Related info
+                        env.SubscriptionId        = configCE2LE.LE_subscriptionId
+                        env.ResourceGroupName     = configCE2LE.LEResource_GroupName
+                        env.LE_TENANT_ID          = configCE2LE.LE_TENANT_ID
+                        env.LE_CLIENT_ID          = configCE2LE.LE_CLIENT_ID
+                        env.QUALYS_USERNAME       = configCE2LE.Qualys_Username
+                        env.citrixClientId        = configCE2LE.citrixClientId
+                        env.Citrix_CustomerId     = configCE2LE.LEcitrixcustomerid
+                        env.Owner                 = configCE2LE.WDAC_Owner
+                        env.Repo                  = configCE2LE.WDAC_Repo
+                        env.Branch                = configCE2LE.WDAC_Branch
+                        env.BasePolicyID          = configCE2LE.BasePolicyID
+                        env.FolderPath            = configCE2LE.WDAC_FolderPath
+                        env.LEClient_CatalogName  = configCE2LE.LEClient_CatalogName
+                        
+                    }
+                }
+                script{
+                    dir("PowerShell"){
+                        echo "Turn On Vms if in Power Off state..."
+                            psCommand = ''' ./TurnOn-LEVM.ps1 -CitrixCustomerId ${env:Citrix_CustomerId} -citrixClientId ${env:citrixClientId} '''
+                            def turnonvm = runPsWithCreds([[id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
+                            echo turnonvm
+                            checkPsError(turnonvm, "Crowdstrike On Demand Scan: Failed to turn on VMs")
+                    }
+                }
+            }
+        }
+        stage("LE VMs WDAC Scan") {
+            steps {
+                script {
+                    try{          
+                        dir("PowerShell") {
+                            echo "Running Powershell script to check WDAC Log"
+                                psCommand = ''' ./WDACLogMonitor.ps1 -TenantId ${env:LE_TENANT_ID} -SubscriptionId ${env:SubscriptionId} -resourceGroupName ${env:ResourceGroupName} -ClientId ${env:LE_CLIENT_ID} '''
+                                def wdac = runPsWithCreds([[id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT_PSW'],
+                                                                [id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'PROD_CLIENT_SECRET_LE']], psCommand)
+                                echo wdac
+                                checkPsError(wdac, "LE VMs WDAC Scan")
+                        }
+                    }catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "LE VMs WDAC Scan"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage("Crowdstrike On Demand Scan ") {
+           steps {
+               script {
+                    try{   
+                        def scriptoutput = ""            
+                        dir("PowerShell") {                           
+                            echo "Running Powershell script CrowdstrikeScan.ps1"
+                                psCommand = ''' ./CrowdstrikeScan.ps1 -TenantId ${env:LE_TENANT_ID} -SubscriptionId ${env:SubscriptionId} -resourceGroupName ${env:ResourceGroupName} -ClientId ${env:LE_CLIENT_ID} -ARCHIVESTORAGEACCOUNTNAME ${env:ARCHIVESTORAGEACCOUNTNAME} -ARCHIVECONTAINERNAME ${env:CROWDSTRIKECONTAINERNAME} -BlobNameFolder ${env:CROWDSTRIKE_BLOBNAME_FOLDER} '''
+                                def crowdstrike = runPsWithCreds([[id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'PROD_CLIENT_SECRET_LE'],
+                                                                  [id: 'PROD-SA-SECRET', type: 'pass', passVar: 'SA_SECRET'],
+                                                                  [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)
+                                echo crowdstrike
+                                checkPsError(crowdstrike, "Crowdstrike On Demand Scan")
+                        }
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Check For Vulnerabilities and upload report to storage account"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage("Remove Stale entries from the Qualys Database") {
+            steps {
+                script {
+                    try{   
+                        def scriptoutput = ""            
+                        dir("PowerShell") {
+                            echo "Running Powershell script Remove-StaleEntries.ps1"
+                                psCommand = ''' ./Remove-StaleEntries.ps1 -TenantId ${env:LE_TENANT_ID} -SubscriptionId ${env:SubscriptionId} -ClientId ${env:LE_CLIENT_ID} -resourceGroupName ${env:ResourceGroupName} -username ${env:QUALYS_USERNAME} '''
+                                def removestaleentries = runPsWithCreds([[id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'PROD_CLIENT_SECRET_LE'],
+                                                                [id: 'QualysKey', type: 'pass', passVar: 'QUALYS_KEY']], psCommand)
+                                echo removestaleentries
+                                checkPsError(removestaleentries, "Remove Stale entries from the Qualys Database")
+                        }
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Remove Stale entries from the Qualys Database"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage("Validate if the VMs are configured and fetch the Asset IDs") {
+            steps {
+                script {
+                    try{   
+                        def scriptoutput = ""            
+                        dir("PowerShell") {
+                            echo "Running Powershell script FetchAssetID.ps1"
+                                psCommand = ''' ./FetchAssetID.ps1 -username ${env:QUALYS_USERNAME} '''
+                                def fetchassetid = runPsWithCreds([[id: 'QualysKey', type: 'pass', passVar: 'QUALYS_KEY']], psCommand)
+                                echo fetchassetid
+                                checkPsError(fetchassetid, "Validate if the VMs are configured and fetch the Asset IDs")
+                        }
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Validate if the VMs are configured and fetch the Asset IDs"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }                
+        stage("Wait for the Default Scan and Trigger OD Scan") {
+            steps {
+                script {     
+                    try{   
+                        def scriptoutput = ""            
+                        dir("PowerShell") {
+                            echo "Running Powershell script WaitDefaultScan.ps1"
+                                psCommand = ''' ./WaitDefaultScan.ps1 -username ${env:QUALYS_USERNAME} '''
+                                def waitdefaultscan = runPsWithCreds([[id: 'QualysKey', type: 'pass', passVar: 'QUALYS_KEY']], psCommand)
+                                echo waitdefaultscan
+                                checkPsError(waitdefaultscan, "Wait for the Default Scan and Trigger OD Scan")
+                            }
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Wait for the Default Scan and Trigger OD Scan"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage("Fetch the current status of the On Demand Scan") {
+           steps {
+               script {
+                    try{           
+                        dir("PowerShell") {
+                            echo "Running Powershell script Fetch-OnDemandScanStatus.ps1"
+                                psCommand = ''' ./Fetch-OnDemandScanStatus.ps1 -username ${env:QUALYS_USERNAME} '''
+                                def fetchodstatus = runPsWithCreds([[id: 'QualysKey', type: 'pass', passVar: 'QUALYS_KEY']], psCommand)
+                                echo fetchodstatus
+                                checkPsError(fetchodstatus, "Fetch the current status of the On Demand Scan")
+                        }
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Fetch the current status of the On Demand Scan"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage("Check For Vulnerabilities and upload report to storage account") {
+           steps {
+               script {
+                    try{   
+                        def scriptoutput = ""            
+                        dir("PowerShell") {
+                            echo "Running Powershell script Qualys-Report.ps1"
+                                psCommand = ''' ./Qualys-Report.ps1 -ARCHIVESTORAGEACCOUNTNAME ${env:ARCHIVESTORAGEACCOUNTNAME} -ARCHIVECONTAINERNAME ${env:QUALYSARCHIVECONTAINERNAME} -BASELINE_BLOBNAME_FOLDER ${env:BASELINE_BLOBNAME_FOLDER} -REPORT_BLOBNAME ${env:QUALYS_REPORT_BLOBNAME_FOLDER} '''
+                                def fetchodstatus = runPsWithCreds([[id: 'PROD-SA-SECRET', type: 'pass', passVar: 'PROD_SA_SECRET'],
+                                                                    [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)
+                                echo fetchodstatus
+                                checkPsError(fetchodstatus, "Check For Vulnerabilities and upload report to storage account")
+                        }
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Check For Vulnerabilities and upload report to storage account"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Notify APM TU for failures') {
+            steps {
+                script {
+                    try{
+                        dir("PowerShell"){
+                            echo "Sending Email to Notify APM TU of Scan failure status!"
+                                psCommand = "./Notify-ScanFailuresCatalogueEntry.ps1 | Out-String "
+                                def notifyscanfailures = runPsWithCreds([[id: 'LQKAEZU-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
+                                echo notifyscanfailures
+                                checkPsError(notifyscanfailures, "Notify APM TU of failure status")
+                        }
+                    }
+                    catch(Exception ex) {
+                            result.retcode = 1
+                            result.retdescription = "${ex.getMessage()}"
+                            result.retStage = "Notify APM TU of failure status"
+                            error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage("Check For Apps that require IAT/AO Testing") {
+            steps {
+               script {
+                    try{          
+                        dir("PowerShell") {
+                            echo "Running Powershell Check For Apps that require IAT Testing"
+                                psCommand = ''' ./Set-AppIATAO.ps1 -username ${env:APP_CATALOGUE_USERNAME} -tenantId ${env:ARM_TENANT_ID} -clientId ${env:ARM_CLIENT_ID}'''
+                                def iatchek = runPsWithCreds([[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
+                                                              [id: 'PROD-CLIENT-SECRET', type: 'pass', passVar: 'CLIENT_SECRET']], psCommand)
+                                checkPsError(iatchek, "Check For Apps that require IAT/AO Testing")
+
+                            //Skip IAT VM Creation If no IAt test required                     
+                            if (iatchek.contains('No Apps detected for IAT Testing.')) {
+                                IATVMs = 'no'
+                            }
+                        }
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Check For Apps that require IAT Testing"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Trigger IAT VM Creation Pipeline') {
+            when {
+                expression { return IATVMs == 'yes'}
+            }
+            steps {
+                script {
+                    try{
+                    build job: 'IAT_VM_CREATION',
+                        wait: true,
+                        parameters: [
+                            string(name: 'IAF_JOBNAME', value: env.IAF_JOBNAME),
+                            string(name: 'IAF_BUILD', value: env.IAF_BUILD)
+                        ]
+                    }
+                    catch(Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Trigger IAT VM Creation Pipeline"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage("Update catalogue workflow phase to testing") {
+            steps {
+               script {
+                    try{        
+                        dir("PowerShell") {
+                            echo "Running Powershell Check to update the catalogue workflow"
+                                psCommand = ''' ./Update-CatalogueWorkflowStatus.ps1 '''
+                                def updatecat = runPsWithCreds([[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
+                                                                [id: 'LQKAEZU-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
+                                echo updatecat
+                                checkPsError(updatecat, "Update the catalogue and Notify the Users")
+                        }
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Update the catalogue and Notify the Users"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('LE VM Decommision') {
+            steps {
+                script {
+                    try {                      
+                        dir("PowerShell") {
+                            echo "Decom LE VMs after Smoke Test and Scans..."
+                            psCommand = """ ./Decommission-CitrixVMs.ps1 -CitrixCustomerId ${env:Citrix_CustomerId} -citrixClientId ${env:citrixClientId}"""
+                            def decomLEVM = runPsWithCreds([[id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
+                            echo decomLEVM
+                            checkPsError(decomLEVM, "decom LE VM")
+                        }
+                       
+                        echo "Decom LE VMs completed"
+                       
+                    } catch(Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Decom LE VMs"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Initiate Continuous test pipeline') {
+            steps {
+                script {
+                    try{                        
+                        build job: 'LE_ContinuousTest_Result_Polling',
+                            wait: false,
+                            parameters: [
+                                string(name: 'LE_SmokeTestResult', value: env.LE_SmokeTestResult),
+                                string(name: 'IAF_JOBNAME', value: env.IAF_JOBNAME),
+                                string(name: 'IAF_BUILD', value: env.IAF_BUILD)
+                            ]
+                    }
+                    catch(Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Initiate Continuous test pipeline"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            script {
+                echo "Result: ${result}"
+            }
+        }
+    }
+}   

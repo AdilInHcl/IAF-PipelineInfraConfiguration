@@ -1,0 +1,228 @@
+def checkVar = "yes"
+def agentName = "prod-agent2" // Replace with your agent label
+def psCommand = ""
+def result = [
+    retcode: 0,
+    retStage: "All Stages Completed",
+    retdescription: "Success"
+]
+// Helper function to use creds (Security purpose)
+def runPsWithCreds(List creds, String pscommand) {
+    def bindings = creds.collect { cred ->
+        if (cred.type == 'pass') {
+            return string(credentialsId: cred.id, variable: cred.passVar)
+        }
+        if (cred.type == 'userpass') {
+            return usernamePassword(credentialsId: cred.id, usernameVariable: cred.userVar, passwordVariable: cred.passVar)
+        }
+        error "Unsupported credential type for ${cred.id}"
+    }
+    return withCredentials(bindings) {
+        def output = powershell(returnStdout: true, script: pscommand).trim()
+        return output
+    }
+}
+// Helper function to catch the error form the powershell scripts
+def checkPsError(output, stageName) {
+    if (!output) return
+
+    if (output.contains("PS_ERROR_DESC=")) {
+        def errorDesc = output.split("PS_ERROR_DESC=")[1].trim()
+        result.retdescription = errorDesc
+        result.retStage = stageName
+        error("Error in ${stageName}: ${errorDesc}")
+    }
+}
+
+pipeline { 
+    agent { 
+        label "${agentName}" 
+    } 
+    
+    environment { 
+        BUILD_LOCATION_CE1 = "CE1"    
+        VDI_BUILD_LOCATION_CE2 = "CE2LE"
+        PROD_SA_SECRET= credentials("PROD-SA-SECRET")  //storage account access key
+        PROD_CLIENT_SECRET = credentials("PROD-CLIENT-SECRET")
+        PIPELINE_WORKSPACE = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}" 
+        BUILD_SOURCESDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}\\s"
+        BUILD_ARTIFACTSTAGINGDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}\\a"
+        BUILD_BINARIESDIRECTORY = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}\\b"
+
+        Script_Path = "C:\\IntuneAPPFactory\\_work\\${env.JOB_NAME}\\${env.BUILD_ID}\\s\\LoginEnterpriseConfig\\Scripts"        
+        
+        LEConfigJsonPath = "${HOMEDRIVE}\\LESmokeTestData\\"
+
+        //Input coming from IAF piepline
+        LE_VM_inputFileName = "${params.LE_TEST_inputFileName}" // LE TEST DATA JSON
+        IAF_JOBNAME = "${params.IAF_JOBNAME}"
+        IAF_BUILD = "${params.IAF_BUILD}"
+
+        // For Testing.
+        // IAF_JOBNAME = "IAF_Intune_App_Factory_E2E"
+        // IAF_BUILD = "16"
+        // LE_VM_inputFileName = "LEAppList_IAF_Intune_App_Factory_E2E_16.json" // LE smoke test results
+    } 
+    stages {
+        stage("Initialize and Setup") {
+            steps {
+                dir("configs"){
+                    script {
+                        def configFile = "${VDI_BUILD_LOCATION_CE2}-STD.json"
+                        def config = readJSON file: configFile
+
+                        // Validate and assign to env to make them available globally
+                        def required = [
+                            'WDAC_Owner', 'WDAC_Repo', 'WDAC_Branch',
+                            'WDAC_FolderPath', 'LE_ContiTest_Owner', 
+                             'LE_ContiTest_Repo','LE_ContiTest_Branch',
+                            'LE_ContiTest_AppListJson', 'LE_API_Base_Url', 'LETestVM', 'LE_UserRole','LE_Launcher'
+                        ]
+                        required.each {
+                            if (!config[it]?.trim()) {
+                                error "Missing or empty value for key '${it}' in config"
+                            }
+                        }
+
+                        // Assign to env
+                        env.Owner = config.WDAC_Owner
+                        env.Repo  = config.WDAC_Repo
+                        env.Branch  = config.WDAC_Branch
+                        env.FolderPath  = config.WDAC_FolderPath
+                        env.LE_ContiTest_Owner = config.LE_ContiTest_Owner
+                        env.LE_ContiTest_Repo = config.LE_ContiTest_Repo
+                        env.LE_ContiTest_Branch  = config.LE_ContiTest_Branch
+                        env.LE_ContiTest_AppListJson  = config.LE_ContiTest_AppListJson
+                        env.LE_API_Base_Url = config.LE_API_Base_Url
+                        env.LETestVM = config.LETestVM
+                        env.LE_UserRole = config.LE_UserRole
+                        env.LE_Launcher = config.LE_Launcher
+                        
+                        // Set Catalogue Credentials from Config
+                        env.APP_CATALOGUE_USERNAME = config.APP_CATALOGUE_USERNAME  // Changed key name
+                        env.APP_CATALOGUE_BASE_URL = config.AppCatalogueAPIBaseURL
+                        // Password will be injected via withCredentials in the stage that needs it
+                    }
+                }
+                script {
+                    // Create Required Directories
+                    ['a\\LEAPILogs'].each { dirName ->
+                        def directoryPath = "${env.PIPELINE_WORKSPACE}\\${dirName}"
+
+                        if (!fileExists(directoryPath)) {
+                            echo "Creating directory: ${directoryPath}"
+                            bat "mkdir \"${directoryPath}\""
+                        } else {
+                            echo "Directory already exists: ${directoryPath}"
+                        }
+                    }
+                }
+                // Delete the last eight builds and cleanup folders
+                dir("Scripts") {
+                    script{
+                        psCommand = ''' ./Remove-Files.ps1 | Out-String'''
+                        def removeFilesOutput = powershell(returnStdout: true, script: psCommand).trim()
+                            echo removeFilesOutput
+                            checkPsError(removeFilesOutput, "Initialize and Setup")
+                    }
+                }
+            }
+        }
+        stage('App Catalogue Service Check') {
+            when {
+                expression { return checkVar == 'yes' }
+            }
+            steps {
+                script {
+                    try {
+                        echo "Checking App Catalogue status for all apps..."
+                        
+                        dir("LoginEnterpriseConfig") {
+                            def jsonPath = "${env.LEConfigJsonPath}${env.LE_VM_inputFileName}"
+                            
+                            // Use runPsWithCreds to inject the password securely
+                            psCommand = " ./Scripts/CheckAppCatalogueStatus.ps1 -JsonFilePath '${jsonPath}'"
+                            
+                            def scriptOutput = runPsWithCreds(
+                                [[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], 
+                                psCommand
+                            )
+                            
+                            echo scriptOutput
+                            checkPsError(scriptOutput, "App Catalogue Service Check")
+                        }
+                        
+                        echo "App Catalogue check completed successfully"
+                        
+                    } catch(Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "App Catalogue Service Check"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage('Create Application, Account-Group and Test Suite') {
+            when {
+                expression { return checkVar == 'yes' }
+                }
+            steps {
+                script {
+                try {
+                    dir("LoginEnterpriseConfig") {
+                        echo "Running Create_TestSuite_Steps.ps1 script..."
+                            psCommand = ''' ./Scripts/Create_TestSuite_Steps.ps1 | Out-String '''
+                            def scriptOutput = runPsWithCreds([[id: 'PROD-LE-Config-Token', type: 'pass', passVar: 'LE_Config_Token'],
+                                                            [id: 'PROD-LE-Read-Token', type: 'pass', passVar: 'LE_Read_Token'],
+                                                            [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], 
+                                                            psCommand)
+                            echo scriptOutput
+                            checkPsError(scriptOutput, "Create Application, Account-Group and Test Suite")
+                    }
+                } 
+                catch(Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Generate C# Test Script, Create Application, Create Account-Group and Create Test-Suite in Login Enterprise Appliance."
+                        error("Result: ${result}")                                         
+                    }
+                }
+            }
+        }
+        stage('Initiate Test Suite Execution Pipeline') {
+            when {
+                expression { return checkVar == 'yes'}
+            }
+            steps {
+                script {
+                    
+                    try{
+                       echo "PROD_LE_TESTSUITE_CREATION completed successfully. Waiting 5 minutes before triggering PROD_EXECUTE_LE_TESTSUITE."
+                       sleep(time: 5, unit: 'MINUTES')
+                        echo "Delay complete. Triggering PROD_EXECUTE_LE_TESTSUITE."
+                        def jobName = env.JOB_NAME
+                        def buildNumber = env.BUILD_NUMBER
+                        def LETestSuiteJsonFile = "${jobName}_${buildNumber}_StageResult.json" // JSON for LE Test.
+
+                        build(
+                            job: 'ST_LE_TESTSUITE_EXECUTION',
+                            wait: true,
+                            parameters: [
+                                string(name: 'LETestSuiteJsonFile', value: LETestSuiteJsonFile),
+                                string(name: 'IAF_JOBNAME', value: env.IAF_JOBNAME),
+                                string(name: 'IAF_BUILD', value: env.IAF_BUILD)
+                            ]
+                        )
+                    }
+                    catch(Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Initiate Test Suite Execution Pipeline"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+    }
+}

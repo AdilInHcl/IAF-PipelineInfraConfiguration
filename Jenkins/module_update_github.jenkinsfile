@@ -1,0 +1,124 @@
+def agentName = "prod-agent1"
+def result = [
+    retcode: 0,
+    retStage: "All Stages Completed",
+    retdescription: "Success"
+]
+def psCommand = ''
+def versionavailable = 'False'
+
+// Helper function to catch the error form the powershell scripts
+def checkPsError(output, stageName) {
+    if (!output) return
+
+    if (output.contains("PS_ERROR_DESC=")) {
+        def errorDesc = output.split("PS_ERROR_DESC=")[1].trim()
+        result.retdescription = errorDesc
+        result.retStage = stageName
+        error("Error in ${stageName}: ${errorDesc}")
+    }
+}
+// Helper function to use creds (Security purpose)
+def runPsWithCreds(List creds, String pscommand) {
+    def bindings = creds.collect { cred ->
+        if (cred.type == 'pass') {
+            return string(credentialsId: cred.id, variable: cred.passVar)
+        }
+        if (cred.type == 'userpass') {
+            return usernamePassword(credentialsId: cred.id, usernameVariable: cred.userVar, passwordVariable: cred.passVar)
+        }
+        error "Unsupported credential type for ${cred.id}"
+    }
+    return withCredentials(bindings) {
+        def output = powershell(returnStdout: true, script: pscommand).trim()
+        return output
+    }
+}
+
+properties([
+    pipelineTriggers([
+        cron('H H * * *') // Runs once a day at a hashed hour
+    ])
+])
+pipeline {
+    agent {
+        label "${agentName}"
+    } 
+    environment {
+        GIT_USER = "tu-lmvnqin"
+        GITHUB_OWNER_IAF_CODE = "WorkplaceServices"
+        SMTP_USERNAME =  "lqkaezu"
+    }
+    stages {
+        stage("Search for Latest modules (Evergreen, IntuneWin32App, MSGraphRequest)") {
+           steps {
+               script {
+                    try{
+                        dir("Scripts") {
+                            echo "Running Powershell script Set-LatestModuleUpdate.ps1"
+                                psCommand = " ./Set-LatestModuleUpdate.ps1 -owner ${env:GITHUB_OWNER_IAF_CODE} | Out-String"
+                                def scriptoutput1 = runPsWithCreds([[id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT_PSW']], psCommand)
+                                echo scriptoutput1
+
+                                // Set flag for the next stage incase version is available
+                                if(scriptoutput1.contains("New versions available")){versionavailable = 'True'}
+                                if(scriptoutput1.contains("Failed to Upload")){currentBuild.result = 'FAILURE'}
+                                checkPsError(scriptoutput1, "Search for Latest modules (Evergreen, IntuneWin32App, MSGraphRequest)")
+                        }
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Search for Latest modules (Evergreen, IntuneWin32App, MSGraphRequest)"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage("Send an Email in case new versions are detected") {
+            when {
+                expression { return versionavailable == 'True' }
+            }
+            steps {
+               script {
+                    try{
+                        dir("Scripts") {
+                            echo "Running Powershell script Notify-LatestModules.ps1"
+                                psCommand = " ./Notify-LatestModules.ps1 -TMUusername ${env:SMTP_USERNAME} | Out-String"
+                                def scriptoutput2 = runPsWithCreds([[id: 'LQKAEZU-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
+                                echo scriptoutput2
+                                checkPsError(scriptoutput2, "Send an Email in case new versions are detected")
+                        }
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Send an Email in case new versions are detected"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            script {
+                echo "${result.retStage}"
+             if (currentBuild.result == 'FAILURE') { 
+                    emailext subject: "Build #${currentBuild.number} Module Update Pipeline - Failed",
+                        body: """Hi Team,
+
+    The build failed to check the latest versions.
+    Error: ${result.retdescription}
+    Please investigate the failure.
+
+    Regards,  
+    Automation Team;
+                                """,
+                            to: "extern.ahmad_daniyal@allianz.de",
+                        from: "module_update_github@allianz.de"  
+                }
+            }
+        }
+    } 
+}   
