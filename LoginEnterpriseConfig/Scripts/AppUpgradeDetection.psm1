@@ -1,5 +1,5 @@
 #method to add App details in AppList json to onboard app in continuous test
-Import-Module -Name "$env:WORKSPACE\PowerShell/FinalEmail-Content_test.psm1"
+Import-Module -Name "$env:WORKSPACE\PowerShell/FinalEmail-Content.psm1"
 
 function Add-AppToJson {
     param(
@@ -159,108 +159,105 @@ function Add_ContinuousTest_To_App {
     param(
         [string]$FamilyId,
         [string]$IntuneAppName,
-        # [string]$OEName,
         [string]$ContinuousTestName
-        
     )
 
     try {
-        # If the app does not exist, create a new item and add it to the JSON data
-         $token = $env:GIT_PAT
-         $owner     = $env:LE_ContiTest_Owner
-         $repo      = $env:LE_ContiTest_Repo
-         $branch    = $env:LE_ContiTest_Branch
-         $JosnFile  = $env:LE_ContiTest_AppListJson 
-         #Write-Host "owner $owner , repo $repo , branch $branch , Json file $JosnFile"
-         $jsonContent = Get-AppListFromJson -owner $owner -repo $repo -branch $branch -JosnFile $JosnFile
-         Write-Host "Json content from as of now before adding this continuous test."
-         Write-Host $jsonContent
-         $jsonData = $jsonContent | ConvertFrom-Json
-        
-        $appExists = $false
+        # Retrieve environment variables
+        $token = $env:GIT_PAT
+        $owner = $env:LE_ContiTest_Owner
+        $repo = $env:LE_ContiTest_Repo
+        $branch = $env:LE_ContiTest_Branch
+        $JosnFile = $env:LE_ContiTest_AppListJson
+
+        # Retrieve JSON content from GitHub
+        $jsonContent = Get-AppListFromJson -owner $owner -repo $repo -branch $branch -JosnFile $JosnFile
+        Write-Host "Json content from as of now before adding this continuous test."
+        Write-Host $jsonContent
+        $jsonData = $jsonContent | ConvertFrom-Json
+
+        # Check if the app exists
         $appExists = check-AppExistence -FamilyId $FamilyId -IntuneAppName $IntuneAppName -JsonContent $JsonContent
 
-        #$testExists = $false
-        if($appExists)
-        {  
+        if ($appExists) {
             $currentApp = $jsonData.Apps | Where-Object { $_.FamilyId.ToLower().Trim() -eq $FamilyId.ToLower().Trim() -and $_.IntuneAppName.ToLower().Trim() -eq $IntuneAppName.ToLower().Trim() }
-    
+
             $testExists = $currentApp.TestDetail | Where-Object { $_.ContinuousTestName.ToLower().Trim() -eq $ContinuousTestName.ToLower().Trim() }
-            
+
             if ($testExists) {
-                Write-Host "Continuous Test already added with this name '$ContinuousTestName' for the App '$IntuneAppName'." 
-                return #"Continuous Test already added with this name '$ContinuousTestName' for the App '$IntuneAppName'." 
+                Write-Host "Continuous Test already added with this name '$ContinuousTestName' for the App '$IntuneAppName'."
+                return
             } else {
                 # Create timestamp
                 $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-                
+
                 # Create new test entry as PSCustomObject
                 $NewTestDetail = [PSCustomObject]@{
                     ContinuousTestName = $ContinuousTestName
                     AddedOn = $timestamp
                 }
-                
+
                 # Add the new test detail to the TestDetail array
-                $currentApp.TestDetail+=$NewTestDetail
-                
-                Write-Host "The Continuous test onboarded in given App successfully." 
+                $currentApp.TestDetail += $NewTestDetail
+
+                Write-Host "The Continuous test onboarded in given App successfully."
             }
-        }
-        else {
+        } else {
             Write-Host "App does not onboarded to the continuous test yet, please check once if you have passed correct IntuneAppName or FamilyId."
-            return #"App does not onboarded to the continuous test yet, please check once if you have passed correct IntuneAppName or FamilyId."
+            return
         }
 
         $jsonString = $jsonData | ConvertTo-Json -Depth 10
         Write-Host "json data after adding continuous test " $jsonString
 
         # Update the JSON on GitHub using API
-            
-            $apiUrl        = "https://github.developer.allianz.io/api/v3/repos/$owner/$repo/contents/$JosnFile"
-            $encodedBranch = [Uri]::EscapeDataString($branch)
-            $headers       = @{ "Authorization" = "Bearer $token"; "Accept" = "application/vnd.github.v3+json" }
- 
-            $maxRetries = 3
-            $retryCount = 0
-            $success    = $false
- 
-            while (-not $success -and $retryCount -lt $maxRetries) {
-                try {
-                    # GET with URL-encoded branch to get correct SHA
-                    $currentFile = Invoke-RestMethod -Uri "$apiUrl`?ref=$encodedBranch" -Headers $headers -Method Get
-                    $sha         = $currentFile.sha
-                    #Write-Host "SHA: $sha"
- 
-                    $base64 = [Convert]::ToBase64String(
-                        [Text.Encoding]::UTF8.GetBytes(($jsonData | ConvertTo-Json -Depth 5))
-                    )
- 
-                    $body = @{
-                        message = "Add new Continuous Test Name [$ContinuousTestName] inside $IntuneAppName App to JSON"
-                        content = $base64
-                        branch  = $branch   # original (not encoded) in body
-                        sha     = $sha
-                    } | ConvertTo-Json -Depth 5
- 
-                    Invoke-RestMethod -Uri $apiUrl -Headers $headers -Method Put -Body $body -ContentType "application/json"
-                    Write-Output "Continuous Test Name [$ContinuousTestName] was added to the JSON file and pushed to GitHub."
-                    $success = $true
- 
-                } catch {
-                    if ($_.Exception.Response.StatusCode -eq 409) {
-                        $retryCount++
-                        Write-Host "Conflict (409). Retrying... ($retryCount/$maxRetries)"
-                        Start-Sleep -Seconds 2
-                    } else {
-                        Write-Output "PS_ERROR_DESC= Error in Add_ContinuousTest_To_App while pushing: $_"
-                        
-                    }
+        $apiUrl = "https://github.developer.allianz.io/api/v3/repos/$owner/$repo/contents/$JosnFile"
+        $encodedBranch = [Uri]::EscapeDataString($branch)
+        $headers = @{ "Authorization" = "Bearer $token"; "Accept" = "application/vnd.github.v3+json" }
+
+        $maxRetries = 3
+        $retryCount = 0
+        $success = $false
+
+        while (-not $success -and $retryCount -lt $maxRetries) {
+            try {
+                # GET with URL-encoded branch to get the latest SHA
+                $currentFile = Invoke-RestMethod -Uri "$apiUrl`?ref=$encodedBranch" -Headers $headers -Method Get
+                $sha = $currentFile.sha
+
+                # Convert JSON content to Base64
+                $base64 = [Convert]::ToBase64String(
+                    [Text.Encoding]::UTF8.GetBytes(($jsonData | ConvertTo-Json -Depth 10))
+                )
+
+                # Prepare the body for the PUT request
+                $body = @{
+                    message = "Add new Continuous Test Name [$ContinuousTestName] inside $IntuneAppName App to JSON"
+                    content = $base64
+                    branch = $branch   # original (not encoded) in body
+                    sha = $sha
+                } | ConvertTo-Json -Depth 10
+
+                # Update the file on GitHub
+                Invoke-RestMethod -Uri $apiUrl -Headers $headers -Method Put -Body $body -ContentType "application/json"
+                Write-Output "Continuous Test Name [$ContinuousTestName] was added to the JSON file and pushed to GitHub."
+                $success = $true
+
+            } catch {
+                if ($_.Exception.Response.StatusCode -eq 409) {
+                    $retryCount++
+                    Write-Host "Conflict (409). Retrying... ($retryCount/$maxRetries)"
+                    Start-Sleep -Seconds 2
+                } else {
+                    Write-Output "PS_ERROR_DESC= Error in Add_ContinuousTest_To_App while pushing: $_"
+                    break
                 }
             }
- 
-            if (-not $success) {
-                Write-Output "PS_ERROR_DESC= Failed to push after $maxRetries retries in Add_ContinuousTest_To_App"
-            }
+        }
+
+        if (-not $success) {
+            Write-Output "PS_ERROR_DESC= Failed to push after $maxRetries retries in Add_ContinuousTest_To_App"
+        }
     } catch {
         Write-Output "PS_ERROR_DESC= Error occurred in Add_ContinuousTest_To_App method in AppUpgradeDetection.pms1 script: $_"
         exit 1
@@ -355,10 +352,10 @@ function SendContinuousTestOnboardingEmail {
 
     # SMTP Configuration
     $SMTPServer = "tmu-cs.mail.allianz"  
-    $SMTPPort = 587                       
-    $From = "wpsavcautomation@allianz.de" 
-    $Username = "TMU-EU-AVC023"
-    $Password = $env:Password_PSW
+    $SMTPPort = 587 
+    $From = $env:SMTP_From
+    $Username = $env:SMTP_UserName 
+    $Password = $env:Password
     
     # Create secure credential object
     $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
@@ -377,47 +374,6 @@ function SendContinuousTestOnboardingEmail {
         Write-Output "PS_ERROR_DESC= Error occurred in SendContinuousTestOnboardingEmail method in AppUpgradeDetection.pms1 script: $_"
         exit 1
     }
-}
-function Send-ScriptNotificationEmail {
-    param(
-        [Parameter(Mandatory = $true)]$Subject,
-        [Parameter(Mandatory = $true)]$Recipient,
-        [Parameter(Mandatory = $true)]$Cc,
-        [Parameter(Mandatory = $true)]$Body,
-        [Parameter(Mandatory = $true)]$TMUusername,
-        [Parameter(Mandatory = $true)]$TMUpassword,
-        [Parameter(Mandatory = $false)]$AttachmentPath
-    )
- 
-    # Set Variables
-    $smtpServer = "tmu-cs.mail.allianz"
-    $smtpFrom = "noreply-wps-app@allianz.com"
-    $messageSubject = $Subject
- 
-    $UserName = $TMUusername
-    $Password = ConvertTo-SecureString $TMUpassword -AsPlainText -Force
-    $credentials = New-Object System.Management.Automation.PSCredential($UserName, $Password)
- 
-    # Build parameters dynamically
-    $mailParams = @{
-        SmtpServer = $smtpServer
-        Credential = $credentials
-        Port       = 587
-        From       = $smtpFrom
-        To         = $Recipient
-        Cc         = $Cc
-        Subject    = $messageSubject
-        Body       = $Body
-        BodyAsHtml = $true
-        UseSsl     = $true
-        Priority   = 'High'
-    }
- 
-    if ($AttachmentPath) {
-        $mailParams.Add("Attachments", $AttachmentPath)
-    }
- 
-    Send-MailMessage @mailParams
 }
 function detect_Onboard_NewApp {
     param(

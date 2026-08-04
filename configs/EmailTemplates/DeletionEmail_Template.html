@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Intune Application Deletion Report</title>
+</head>
+<body style="margin:0;padding:20px;background-color:#f5f5f5;font-family:'Segoe UI',Arial,sans-serif;color:#323130;">
+
+<table width="100%" cellpadding="0" cellspacing="0">
+<tr>
+<td align="center">
+
+<table width="650" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e1e1e1;border-radius:8px;">
+<tr>
+<td style="padding:30px;">
+
+<h2 style="margin:0 0 20px 0;color:#323130;font-weight:600;">
+Intune Application Deletion Report
+</h2>
+
+<p>Hello Team,</p>
+
+<p>
+The deletion request for the following application has been processed.
+</p>
+
+<!-- Status Banner -->
+ {{StatusBanner}}
+
+<!-- Details -->
+<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+    <tr>
+        <td style="padding:12px;border-bottom:1px solid #edebe9;font-weight:600;width:180px;">
+            Application Name:
+        </td>
+        <td style="padding:12px;border-bottom:1px solid #edebe9;">
+            {{AppName}}
+        </td>
+    </tr>
+
+    <tr>
+        <td style="padding:12px;border-bottom:1px solid #edebe9;font-weight:600;">
+            Application ID:
+        </td>
+        <td style="padding:12px;border-bottom:1px solid #edebe9;">
+            {{IntuneAppId}}
+        </td>
+    </tr>
+
+    <tr>
+        <td style="padding:12px;border-bottom:1px solid #edebe9;font-weight:600;">
+            Status:
+        </td>
+        <td style="padding:12px;border-bottom:1px solid #edebe9;font-weight:600;">
+            {{STATUS}}
+        </td>
+    </tr>
+
+    <tr>
+        <td style="padding:12px;border-bottom:1px solid #edebe9;font-weight:600;">
+            Triggered By:
+        </td>
+        <td style="padding:12px;border-bottom:1px solid #edebe9;">
+            {{UserId}}
+        </td>
+    </tr>
+
+    <tr>
+        <td style="padding:12px;font-weight:600;">
+            Processed On:
+        </td>
+        <td style="padding:12px;">
+            {{DATE}}
+        </td>
+    </tr>
+
+    
+</table>
+
+<p style="margin-top:25px;">
+{{RESULT_DESCRIPTION}}
+</p>
+
+<p>
+Please let us know if any additional information is required.
+</p>
+
+</td>
+</tr>
+</table>
+
+</td>
+</tr>
+</table>
+
+</body>
+</html>

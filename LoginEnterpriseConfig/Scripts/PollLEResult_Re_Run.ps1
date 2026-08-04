@@ -243,6 +243,54 @@ function Update-AppCatalogueStatus {
         Write-Host "WARNING: Update-AppCatalogueStatus failed: $_"
     }
 }
+function Delete-LE-Items{
+  param(
+        [Parameter(Mandatory = $true)]
+        $currentItem
+    )
+   
+  try { 
+    #decommision LE entities    
+        $items = @()
+        foreach ($step in $currentItem.steps) {
+          $items = $items + $step.ApplicationId     
+        }
+        $appIds = $items | ConvertTo-Json 
+        Write-Host "applicationIds " $appIds 
+
+        $testId = $currentItem.AppTestSuiteId
+        $APIURL = $ApiBaseUrl + "tests/" + $testId
+        Write-Host " tests " $APIURL
+        #below line is to delete the test suite by id
+        Delete_LE_Items_By_Id -APIURL $APIURL -authToken $AuthTokenWithConfigAccess -itemId  $testId 
+                    
+        #delete account group by id
+        $AppAccountGroupId = $currentItem.AppAccountGroupId
+        $APIURL = $ApiBaseUrl + "account-groups/" + $AppAccountGroupId
+        Write-Host " account-groups " $APIURL 
+        Delete_LE_Items_By_Id -APIURL $APIURL -authToken $AuthTokenWithConfigAccess -itemId  $AppAccountGroupId 
+        $steps = @($currentItem.steps)
+        if ($steps.Count -eq 1) {
+          #below line is to delete the application by id
+          $appId = $items
+          $APIURL = $ApiBaseUrl + "applications/" + $appId
+          Write-Host " applications " $APIURL
+          Delete_LE_Items_By_Id -APIURL $APIURL -authToken $AuthTokenWithConfigAccess -itemId  $appIds 
+        }
+        else {
+          #bulk delete applications from LE console by application ids 
+          $APIURL = $ApiBaseUrl + "applications/"            
+          Delete_LE_Items_InBulk -APIURL $APIURL -authToken $AuthTokenWithConfigAccess -items $appIds 
+        }
+      
+  }
+  catch {
+    Write-Output "PS_ERROR_DESC= Network error occurred in Delete-LE-Items method in PollLEResult_Re_Run.ps1 script: $_"
+    exit 1
+  }
+  
+      
+}
 try {
   Write-Host "Max Limit : " $LE_Test_Re_Run_MaxLimit,
   Write-Host "current Run Count : " $LE_Test__CurrentRun 
@@ -451,40 +499,6 @@ try {
         Start-Sleep -Seconds 30
       }
     }       
-    #decommision LE entities
-    if ($LE_Test_Re_Run_MaxLimit -eq $LE_Test__CurrentRun) {
-      $items = @()
-      foreach ($step in $currentItem.steps) {
-        $items = $items + $step.ApplicationId     
-      }
-      $appIds = $items | ConvertTo-Json 
-      Write-Host "applicationIds " $appIds 
-
-      $testId = $currentItem.AppTestSuiteId
-      $APIURL = $ApiBaseUrl + "tests/" + $testId
-      Write-Host " tests " $APIURL
-      #below line is to delete the test suite by id
-      Delete_LE_Items_By_Id -APIURL $APIURL -authToken $AuthTokenWithConfigAccess -itemId  $testId 
-                  
-      #delete account group by id
-      $AppAccountGroupId = $currentItem.AppAccountGroupId
-      $APIURL = $ApiBaseUrl + "account-groups/" + $AppAccountGroupId
-      Write-Host " account-groups " $APIURL 
-      Delete_LE_Items_By_Id -APIURL $APIURL -authToken $AuthTokenWithConfigAccess -itemId  $AppAccountGroupId 
-      $steps = @($currentItem.steps)
-      if ($steps.Count -eq 1) {
-        #below line is to delete the application by id
-        $appId = $items
-        $APIURL = $ApiBaseUrl + "applications/" + $appId
-        Write-Host " applications " $APIURL
-        Delete_LE_Items_By_Id -APIURL $APIURL -authToken $AuthTokenWithConfigAccess -itemId  $appIds 
-      }
-      else {
-        #bulk delete applications from LE console by application ids 
-        $APIURL = $ApiBaseUrl + "applications/"            
-        Delete_LE_Items_InBulk -APIURL $APIURL -authToken $AuthTokenWithConfigAccess -items $appIds 
-      }
-    }
     
     $TestAppList = $TestAppList + $CrrentTestResultObject
   }
@@ -498,22 +512,58 @@ try {
   
   $FinalResult = $TestRunResult | ConvertTo-Json -Depth 10 
   Set-Content -Path $TestResultJsonDataPath -Value $FinalResult
-  #commenting app catalogue code as it is breaking the pipeline
-  #Update-AppCatalogueStatus -Data $TestRunResult
 
-     
-  #final data of Test Run Result
-  if ($LE_Test_Re_Run_MaxLimit -eq $LE_Test__CurrentRun) {
-    #LEScanFolder = "${HOMEDRIVE}\\SCANS\\SmokeTest\\"
+  #check if smoke test passed for all given apps
+  $AllAppSmokeTest = "Failed"  
+  $testResult = $TestRunResult.Apps | Where-Object { $_.OverAllResult -eq "Failed" }
+  if($testResult){$AllAppSmokeTest = "Failed"}
+  else {$AllAppSmokeTest = "Passed"}
+  
+  if ($LE_Test_Re_Run_MaxLimit -eq $LE_Test__CurrentRun -or $AllAppSmokeTest -eq "Passed") { 
     
+    # vmcreation json file path
+    $VMInfoFileName = $env:Input_File_name
+    $VMCreation_JSONFilePath = Join-Path -Path $env:IAF_BUILD_BINARIESDIRECTORY -ChildPath $VMInfoFileName
+    
+    foreach($currentItem in $TestRunResult.Apps)
+    {   
+      #decommision LE entities
+      Delete-LE-Items -currentItem $currentItem
+
+      # update flag for SmokeTest in vmcreation json file
+      if (Test-Path $VMCreation_JSONFilePath) {   
+        # Load LE VMCreation JSON data 
+        $VMCreation_JSONObject = Get-Content -Path $VMCreation_JSONFilePath | ConvertFrom-Json
+        $currentApp= $VMCreation_JSONObject.Apps | Where-Object { $_.IntuneAppName -eq $currentItem.IntuneAppName } 
+
+          if($currentItem.OverAllResult -eq "Passed")
+          {
+           $currentApp | Add-Member -NotePropertyName "SmokeTest" -NotePropertyValue "Pass" -Force
+          }
+          else {
+            $currentApp | Add-Member -NotePropertyName "SmokeTest" -NotePropertyValue "Failed" -Force
+          }
+          #reload updated json data in VM creation json file
+          $VMCreation_JSONObject | ConvertTo-Json -Depth 10 | Set-Content -Path $VMCreation_JSONFilePath -Encoding UTF8     
+      } 
+       else {
+        Write-Output "PS_ERROR_DESC= JSON file at path '$VMCreation_JSONFilePath' does not exist."
+        exit 1
+      }
+    }
+    #save final data of Test Run Result
     $IAF_BUILD_TAG = "$($env:IAF_JOBNAME)_$($env:IAF_BUILD)"
     $ScanFolder = Join-Path -path $env:LEScanFolder -ChildPath $IAF_BUILD_TAG
     if (-not(Test-Path $ScanFolder)) { New-Item -Path $ScanFolder -ItemType Directory | Out-Null }
-    $TestResult_Final_Data_FilePath = Join-Path -Path $ScanFolder -ChildPath $env:LESmokeTestResultFile
-   
+    $TestResult_Final_Data_FilePath = Join-Path -Path $ScanFolder -ChildPath $env:LESmokeTestResultFile 
     Set-Content -Path $TestResult_Final_Data_FilePath -Value $FinalResult
+
+    #update app -catalogue status for each app regarding smoke test
     Update-AppCatalogueStatus -Data $TestRunResult
+    
+    Write-Output "All App Smoke Test Passed"
   }
+  
 }
  
 catch [System.Net.WebException] {

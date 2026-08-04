@@ -123,7 +123,7 @@ function Send-ScriptNotificationEmail {
  
     # Set Variables
     $smtpServer = "tmu-cs.mail.allianz"
-    $smtpFrom = "noreply-wps-app@allianz.com"
+    $smtpFrom = "extern.iaftu01_non-personal-identity@allianz.com"
     $messageSubject = $Subject
  
     $UserName = $TMUusername

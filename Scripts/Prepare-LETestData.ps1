@@ -13,7 +13,7 @@
     Modified by: Mo Adil Ansari
     Date:04 July 2025        
 #>
-
+Import-Module "$($env:WORKSPACE)/Scripts/UpdateCatalogue.psm1"
 
 # =========================
 # Function: Merge-LEAppData
@@ -51,6 +51,7 @@ function Create-LEAppData {
         # Save final JSON output
         $finalObject | ConvertTo-Json -Depth 10 | Set-Content -Path $OutputJsonPath -Encoding UTF8
         Write-Host "Final JSON saved to: $OutputJsonPath" -ForegroundColor Green
+        return $finalObject
     }
     catch {
         Write-Error "PS_ERROR_DESC= Error during merge operation: $_"
@@ -80,4 +81,14 @@ $inputJsonPath = Join-Path -Path $basefolder_Input -ChildPath $InputFileName
 $outputJsonPath = Join-Path -Path $basefolder_Output -ChildPath $OutputFileName
 
 # Call merge funation
-Create-LEAppData -InputJsonPath $inputJsonPath -OutputJsonPath $outputJsonPath
+$LEAppsFinal = Create-LEAppData -InputJsonPath $inputJsonPath -OutputJsonPath $outputJsonPath
+
+#Set the Apps to the dev testing phase
+$token = Get-CatalogueAccessToken -username $env:APP_CATALOGUE_USERNAME -password $env:APP_CATALOGUE_SECRET #Created token for catalogue entry
+
+$timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ")
+foreach ($app in $LEAppsFinal.Apps) {
+    $AppID = $app.AppID
+    Write-Host "Updating Dev Testing Start Time for $($app.IntuneAppName) [$AppID]"
+    Update-PhaseTime -AccessToken $token -Time $timestamp  -Phase_Field "Dev_Testing_Phase_Start_Time" -AppID $AppID
+}

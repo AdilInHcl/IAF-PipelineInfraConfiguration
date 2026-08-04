@@ -31,7 +31,7 @@ function Send-ScriptNotificationEmail {
     )
     #Set Variables
     $smtpServer = "tmu-cs.mail.allianz"
-    $smtpFrom = "noreply-wps-app@allianz.com"
+    $smtpFrom = "extern.iaftu01_non-personal-identity@allianz.com"
     $timestamp = (Get-Date).ToString("yyyy-MM-dd")  # Add timestamp to subject
     $messageSubject = $Subject
     $Body = " "

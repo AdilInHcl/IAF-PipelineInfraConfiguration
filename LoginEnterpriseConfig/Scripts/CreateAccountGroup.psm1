@@ -54,12 +54,20 @@
             Authorization = "Bearer " + $AuthTokenWithConfigAccess
             ContentType   = "application/json"
         }
+
+        $AccountGroupName = "T_51_ST_AccGrp_" + $IntuneAppName + "_"+ $currentDateTime
+    
+        # Ensure name doesn't exceed 64 characters
+        if ($AccountGroupName.Length -gt 64) {
+            $AccountGroupName = $AccountGroupName.Substring(0, 64)
+        }
+
         $currentDateTime = Get-Date -Format "yyyyMMdd_HHmmss_fff"
         $accountGroup_RequestBody = [CreateAccountGroup]::new()
  
         $accountGroup_RequestBody.type = "Selection"
  
-        $accountGroup_RequestBody.name = "T_51_ST_AccGrp_" + $IntuneAppName + "_"+ $currentDateTime
+        $accountGroup_RequestBody.name = $AccountGroupName
  
         $accountGroup_RequestBody.description = "T_51_Smoke Test(ST) AccountGroup for " + $IntuneAppName + " and AppId - $AppId"
  

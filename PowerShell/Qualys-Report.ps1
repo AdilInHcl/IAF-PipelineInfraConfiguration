@@ -249,7 +249,7 @@ try{
     #Scanned VMs JSON content
     $qulaysScanStatus = (Get-Content -Raw -Path $QualysODScanVMReportPath | ConvertFrom-Json).Apps 
     $scanned_vms = $qulaysScanStatus| Where-Object {$_.ScanCompletedTime -ne ""}
-    $running_vms = $qulaysScanStatus| Where-Object {$_.ScanCompletedTime -eq "" -and $_.ScanTriggered -eq 'YES'} 
+    $running_vms = $qulaysScanStatus| Where-Object {$_.ScanCompletedTime -eq ""}
 
     #Set the status for the runiing VMs
     if(@($running_vms).Count -gt 0){
@@ -260,13 +260,14 @@ try{
         foreach($vm in $running_vms){
             $app = $finalObject.Apps | Where-Object {$_.DeviceName -eq $vm.DeviceName}
             $app | Add-Member -NotePropertyName "QualysScan" -NotePropertyValue "Running" -Force
-            Update-CatlogueStatus -AccessToken $token -Apps $vm -Reason "IAF - Qualys Vulnerability Identified"
+            #Update-CatlogueStatus -AccessToken $token -Apps $vm -Reason "IAF - Qualys Vulnerability Identified"
         }
     }
 
     #if the Scan is running on all VMs exit else gather report
     if(@($running_vms).Count -eq @($qulaysScanStatus).Count){
         Write-HOST "The Qualys Scan is still running on all the VMs. Skipping Scan results";
+        $finalObject | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonFilePath -Encoding UTF8
         exit
     }
     else{

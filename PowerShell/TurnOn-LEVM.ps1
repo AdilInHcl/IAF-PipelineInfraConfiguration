@@ -12,10 +12,11 @@ This script is reponsible to turn on the VMs incase the they are shut down
 
 #>
 param(
-    [string]$CitrixCustomerId,
-    [string]$citrixClientId,
-    [String]$citrixPassword = $env:citrixPassword
+    [string]$CitrixCustomerId = $env:CitrixCustomerId,
+    [string]$citrixClientId   = $env:citrixClientId,
+    [string]$citrixPassword   = $env:citrixPassword
 )
+Import-Module "$($env:WORKSPACE)/Scripts/CitrixConnect.psm1"
 asnp citrix.*
 
 #Start the VMs in case turned off
@@ -61,10 +62,7 @@ function Start-CitrixVmIfOff {
 # Connect to Citrix Cloud
 ###############################
 try {
-    Set-XDCredentials -CustomerId $CitrixCustomerId -APIKey $citrixClientId -SecretKey $citrixPassword -ProfileType CloudApi #-StoreAs "CitrixEUConnection" -Verbose
-    Write-Host "Credentials Set.."
-    Get-XDAuthentication #-ProfileName "CitrixEUConnection" -Verbose
-    Write-Host "Successfully logged in to the Citrix Cloud" 
+    Connect-Citrix
 }
 catch{
     Write-Output "PS_ERROR_DESC= Failed to Connect to Citrix Error: $_"

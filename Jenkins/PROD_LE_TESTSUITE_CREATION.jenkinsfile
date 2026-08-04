@@ -68,6 +68,9 @@ pipeline {
             steps {
                 dir("configs"){
                     script {
+                        def configFile_CE1 = "${BUILD_LOCATION_CE1}-STD.json"
+                        def config_CE1 = readJSON file: configFile_CE1
+
                         def configFile = "${VDI_BUILD_LOCATION_CE2}-STD.json"
                         def config = readJSON file: configFile
 
@@ -99,8 +102,8 @@ pipeline {
                         env.LE_Launcher = config.LE_Launcher
                         
                         // Set Catalogue Credentials from Config
-                        env.APP_CATALOGUE_USERNAME = config.APP_CATALOGUE_USERNAME  // Changed key name
-                        env.APP_CATALOGUE_BASE_URL = config.AppCatalogueAPIBaseURL
+                        env.APP_CATALOGUE_USERNAME = config_CE1.APP_CATALOGUE_USERNAME  // Changed key name
+                        env.APP_CATALOGUE_BASE_URL = config_CE1.APP_CATALOGUE_BASE_URL
                         // Password will be injected via withCredentials in the stage that needs it
                     }
                 }

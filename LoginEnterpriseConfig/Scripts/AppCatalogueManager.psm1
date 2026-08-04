@@ -4,21 +4,37 @@ function Get-CatalogueAccessToken{
     [string]$username,
     [string]$password
     )
+
     $body = @{
         username = $username
         password = $password
     } | ConvertTo-Json
 
-    $response = Invoke-RestMethod -Method Post `
-        -Uri "$($env:APP_CATALOGUE_BASE_URL)/auth/login" `
-        -Headers @{
-            "accept" = "application/json"
-            "Content-Type" = "application/json"
-        } `
-        -Body $body
+    $maxRetries = 3
 
-    $access_token = $response.access_token
-    return $access_token
+    for($i = 1; $i -le $maxRetries; $i++){
+        try{
+            $response = Invoke-RestMethod -Method Post `
+                -Uri "$($env:APP_CATALOGUE_BASE_URL)/auth/login" `
+                -Headers @{
+                    "accept" = "application/json"
+                    "Content-Type" = "application/json"
+                } `
+                -Body $body
+
+            $access_token = $response.access_token
+            return $access_token
+        }
+        catch{
+            Write-Warning "Get-CatalogueAccessToken failed. Attempt $i of $maxRetries. Error: $_"
+
+            if($i -eq $maxRetries){
+                throw
+            }
+
+            Start-Sleep -Seconds 10
+        }
+    }
 }
 #Get App Catalogue Status for a specific AppID
 function Get-AppCatalogueStatus {
@@ -125,8 +141,7 @@ function AppCatalogueUpdate {
         Exit 1
     }
 }
-function Get-AppScopeTag 
-{
+function Get-AppScopeTag{
    param(
         [parameter(Mandatory = $true)]
         [string]$IntuneAppName

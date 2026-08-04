@@ -61,7 +61,7 @@ function CreateApplicationwithScript {
     $timestamp = Get-Date -Format "yyyyMMdd_HHmmss_fff"
     $random = Get-Random -Minimum 1000 -Maximum 9999
     $baseAppName = Final-AppName -IntuneAppName $IntuneAppName -ProcessName $ProcessName
-    $AppName = "T_51_ST_${baseAppName}_${timestamp}_${random}"
+    $AppName = "${baseAppName}_${timestamp}_${random}"
     
     # Ensure name doesn't exceed 64 characters
     if ($AppName.Length -gt 64) {
@@ -108,8 +108,8 @@ function CreateApplicationwithScript {
         $Reason = "LE Smoke Test script creation failed"
         $username = $env:APP_CATALOGUE_USERNAME 
         $password = $env:APP_CATALOGUE_SECRET
-        $catlogueToken = Get-CatalogueAccessToken -username $username -password $password
-        AppCatalogueUpdate -AccessToken $catlogueToken -IntuneAppName $IntuneAppName -AppID $AppId -Reason $Reason -Comment $Comment = $errorMessage
+        # $catlogueToken = Get-CatalogueAccessToken -username $username -password $password
+        # AppCatalogueUpdate -AccessToken $catlogueToken -IntuneAppName $IntuneAppName -AppID $AppId -Reason $Reason -Comment $Comment = $errorMessage
         Write-Output "PS_ERROR_DESC= Error while Creating Application in CreateApplicationwithScript: $_"
         exit 1      
     }
@@ -129,7 +129,7 @@ function Build-AppName {
         [string]$DateStamp
     )
 
-    if ([string]::IsNullOrWhiteSpace($ProcessName)) {
+    if ([string]::IsNullOrWhiteSpace($ProcessName) -or $ProcessName -eq "NA") {
         return "T_51_ST_{0}_{1}" -f $IntuneAppName, $DateStamp
     }
     else {

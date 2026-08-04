@@ -47,7 +47,7 @@ pipeline {
     environment {
         GIT_USER = "tu-lmvnqin"
         GITHUB_OWNER_IAF_CODE = "WorkplaceServices"
-        SMTP_USERNAME =  "lqkaezu"
+        SMTP_USERNAME =  "iaftu01"
     }
     stages {
         stage("Search for Latest modules (Evergreen, IntuneWin32App, MSGraphRequest)") {
@@ -85,7 +85,7 @@ pipeline {
                         dir("Scripts") {
                             echo "Running Powershell script Notify-LatestModules.ps1"
                                 psCommand = " ./Notify-LatestModules.ps1 -TMUusername ${env:SMTP_USERNAME} | Out-String"
-                                def scriptoutput2 = runPsWithCreds([[id: 'LQKAEZU-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
+                                def scriptoutput2 = runPsWithCreds([[id: 'iaftu01-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
                                 echo scriptoutput2
                                 checkPsError(scriptoutput2, "Send an Email in case new versions are detected")
                         }

@@ -85,7 +85,7 @@ pipeline {
                         env.LE_CLIENT_ID          = configCE2LE.LE_CLIENT_ID
                         env.QUALYS_USERNAME       = configCE2LE.Qualys_Username
                         env.citrixClientId        = configCE2LE.citrixClientId
-                        env.Citrix_CustomerId     = configCE2LE.LEcitrixcustomerid
+                        env.CitrixCustomerId     = configCE2LE.LEcitrixcustomerid
                         env.Owner                 = configCE2LE.WDAC_Owner
                         env.Repo                  = configCE2LE.WDAC_Repo
                         env.Branch                = configCE2LE.WDAC_Branch
@@ -98,7 +98,7 @@ pipeline {
                 script{
                     dir("PowerShell"){
                         echo "Turn On Vms if in Power Off state..."
-                            psCommand = ''' ./TurnOn-LEVM.ps1 -CitrixCustomerId ${env:Citrix_CustomerId} -citrixClientId ${env:citrixClientId} '''
+                            psCommand = ''' ./TurnOn-LEVM.ps1 -CitrixCustomerId ${env:CitrixCustomerId} -citrixClientId ${env:citrixClientId} '''
                             def turnonvm = runPsWithCreds([[id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
                             echo turnonvm
                             checkPsError(turnonvm, "Crowdstrike On Demand Scan: Failed to turn on VMs")
@@ -204,7 +204,8 @@ pipeline {
                         dir("PowerShell") {
                             echo "Running Powershell script WaitDefaultScan.ps1"
                                 psCommand = ''' ./WaitDefaultScan.ps1 -username ${env:QUALYS_USERNAME} '''
-                                def waitdefaultscan = runPsWithCreds([[id: 'QualysKey', type: 'pass', passVar: 'QUALYS_KEY']], psCommand)
+                                def waitdefaultscan = runPsWithCreds([[id: 'QualysKey', type: 'pass', passVar: 'QUALYS_KEY'],
+                                                                        [id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
                                 echo waitdefaultscan
                                 checkPsError(waitdefaultscan, "Wait for the Default Scan and Trigger OD Scan")
                             }
@@ -262,27 +263,27 @@ pipeline {
                 }
             }
         }
-        stage('Notify APM TU for failures') {
-            steps {
-                script {
-                    try{
-                        dir("PowerShell"){
-                            echo "Sending Email to Notify APM TU of Scan failure status!"
-                                psCommand = "./Notify-ScanFailuresCatalogueEntry.ps1 | Out-String "
-                                def notifyscanfailures = runPsWithCreds([[id: 'LQKAEZU-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
-                                echo notifyscanfailures
-                                checkPsError(notifyscanfailures, "Notify APM TU of failure status")
-                        }
-                    }
-                    catch(Exception ex) {
-                            result.retcode = 1
-                            result.retdescription = "${ex.getMessage()}"
-                            result.retStage = "Notify APM TU of failure status"
-                            error("Result: ${result}")
-                    }
-                }
-            }
-        }
+        // stage('Notify APM TU for failures') {
+        //     steps {
+        //         script {
+        //             try{
+        //                 dir("PowerShell"){
+        //                     echo "Sending Email to Notify APM TU of Scan failure status!"
+        //                         psCommand = "./Notify-ScanFailuresCatalogueEntry.ps1 | Out-String "
+        //                         def notifyscanfailures = runPsWithCreds([[id: 'iaftu01-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
+        //                         echo notifyscanfailures
+        //                         checkPsError(notifyscanfailures, "Notify APM TU of failure status")
+        //                 }
+        //             }
+        //             catch(Exception ex) {
+        //                     result.retcode = 1
+        //                     result.retdescription = "${ex.getMessage()}"
+        //                     result.retStage = "Notify APM TU of failure status"
+        //                     error("Result: ${result}")
+        //             }
+        //         }
+        //     }
+        // }
         stage("Check For Apps that require IAT/AO Testing") {
             steps {
                script {
@@ -340,7 +341,7 @@ pipeline {
                             echo "Running Powershell Check to update the catalogue workflow"
                                 psCommand = ''' ./Update-CatalogueWorkflowStatus.ps1 '''
                                 def updatecat = runPsWithCreds([[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
-                                                                [id: 'LQKAEZU-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
+                                                                [id: 'iaftu01-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
                                 echo updatecat
                                 checkPsError(updatecat, "Update the catalogue and Notify the Users")
                         }
@@ -360,14 +361,15 @@ pipeline {
                     try {                      
                         dir("PowerShell") {
                             echo "Decom LE VMs after Smoke Test and Scans..."
-                            psCommand = """ ./Decommission-CitrixVMs.ps1 -CitrixCustomerId ${env:Citrix_CustomerId} -citrixClientId ${env:citrixClientId}"""
+                            psCommand = """ ./Decommission-CitrixVMs.ps1 -CitrixCustomerId ${env:CitrixCustomerId} -citrixClientId ${env:citrixClientId}"""
                             def decomLEVM = runPsWithCreds([[id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
                             echo decomLEVM
                             checkPsError(decomLEVM, "decom LE VM")
+                            echo "Skipping Decommisioning stage for testing"
                         }
                        
                         echo "Decom LE VMs completed"
-                       
+                                               
                     } catch(Exception ex) {
                         result.retcode = 1
                         result.retdescription = "${ex.getMessage()}"
@@ -382,7 +384,7 @@ pipeline {
                 script {
                     try{                        
                         build job: 'LE_ContinuousTest_Result_Polling',
-                            wait: false,
+                            wait: true,
                             parameters: [
                                 string(name: 'LE_SmokeTestResult', value: env.LE_SmokeTestResult),
                                 string(name: 'IAF_JOBNAME', value: env.IAF_JOBNAME),

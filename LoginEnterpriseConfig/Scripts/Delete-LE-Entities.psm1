@@ -32,7 +32,7 @@ function Delete_LE_Items_By_Id {
         # Write-Host "An error occurred while calling the API to delete LE Entity"
         # Write-Host $_.Exception.Message
         Write-Output "PS_ERROR_DESC= An error occurred while calling the API to delete LE Entity in Delete-LE-Entities.psm1 script: $_"
-        exit 1 
+        #exit 1 
     }
 }
  
@@ -73,7 +73,7 @@ function Delete_LE_Items_InBulk {
         # Write-Host "An error occurred while calling the API to delete LE Entities in bulk"
         # Write-Host $_.Exception.Message
         Write-Output "PS_ERROR_DESC= An error occurred while calling the API to delete LE Entities in bulk in Delete-LE-Entities.psm1 script: $_"
-        exit 1 
+        #exit 1 
     }
 }
  

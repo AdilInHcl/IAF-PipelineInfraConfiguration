@@ -50,7 +50,7 @@ Process {
         )
         Process {
             # Split the version string by non-numerical characters and then join them by a period to construct the version number
-            $ConvertVersion = ($Version -split "\D") -join "."
+            $ConvertVersion = (($Version -split "\D") | Where-Object { $_ }) -join "."
 
             # Return the converted version number
             return $ConvertVersion
@@ -129,6 +129,9 @@ Process {
             }
             if ($FilterOptions.Version) {
                 $FilterList.Add("`$PSItem.Version -eq ""$($FilterOptions.Version)""") | Out-Null
+            }
+            if ($FilterOptions.Installer) {
+                $FilterList.Add("`$PSItem.Installer -eq ""$($FilterOptions.Installer)""") | Out-Null
             }
 
             # Construct script block from filter list array
@@ -307,6 +310,24 @@ Process {
 
         # Foreach application in appList.json, check existence in Intunem and determine if new application / version should be published
         $AppsProcessList = Get-Content -Path $AppsProcessListFilePath -ErrorAction "Stop" | ConvertFrom-Json
+
+        #Fetching Intune App Data
+        $MaxRetries  = 10
+        $RetryDelay  = 30
+        $Attempt     = 0
+        $Win32AppResources    = $null
+        while ($Attempt -lt $MaxRetries -and $null -eq $Win32AppResources) {
+            $Attempt++
+            try {
+                $Win32AppResources = Invoke-MSGraphOperation -Get -APIVersion "Beta" -Resource "deviceAppManagement/mobileApps?`$filter=isof('microsoft.graph.win32LobApp')"
+            }
+            catch {
+                Write-Output "$_"
+                Write-Output -InputObject "Failed to upload to inutne on attempt $Attempt/$MaxRetries for '$($App.IntuneAppName)': ErrMsg. Retrying in $RetryDelay seconds..."
+                Start-Sleep -Seconds $RetryDelay
+            }
+        }
+
         foreach ($App in $AppsProcessList) {
             Write-Output -InputObject "[APPLICATION: $($App.IntuneAppName)] - Initializing"
 
@@ -379,7 +400,7 @@ Process {
                             
                             # Attempt to locate the application in Intune
                             Write-Output -InputObject "Attempting to find application in Intune using naming convention: $($AppDisplayName)"
-                            $Win32AppResources = Invoke-MSGraphOperation -Get -APIVersion "Beta" -Resource "deviceAppManagement/mobileApps?`$filter=isof('microsoft.graph.win32LobApp')"
+                            #$Win32AppResources = Invoke-MSGraphOperation -Get -APIVersion "Beta" -Resource "deviceAppManagement/mobileApps?`$filter=isof('microsoft.graph.win32LobApp')"
                             if ($Win32AppResources -ne $null) {
 
                                 # Detect Win32 application matching displayName
@@ -511,7 +532,7 @@ Process {
     }
     catch [System.Exception] {
         
-        Write-Host "PS_ERROR_DESC= $($MyInvocation.MyCommand): Failed to retrieve authentication token with error message: $($_.Exception.Message)"
+        Write-Output "PS_ERROR_DESC= $($MyInvocation.MyCommand): Failed to retrieve authentication token with error message: $($_.Exception.Message)"
         exit 1
     }
 }

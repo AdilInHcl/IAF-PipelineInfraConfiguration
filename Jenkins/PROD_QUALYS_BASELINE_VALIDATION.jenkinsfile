@@ -1,0 +1,185 @@
+def agentName = "prod-agent1"
+def IATVMs = "yes"
+def emailrequired = 'False'
+def result = [
+    retcode: 0,
+    retStage: "All Stages Completed",
+    retdescription: "Success"
+]
+def psCommand = ""
+// Helper function to use creds (Security purpose)
+def runPsWithCreds(List creds, String pscommand) {
+    def bindings = creds.collect { cred ->
+        if (cred.type == 'pass') {
+            return string(credentialsId: cred.id, variable: cred.passVar)
+        }
+        if (cred.type == 'userpass') {
+            return usernamePassword(credentialsId: cred.id, usernameVariable: cred.userVar, passwordVariable: cred.passVar)
+        }
+        error "Unsupported credential type for ${cred.id}"
+    }
+    return withCredentials(bindings) {
+        def output = powershell(returnStdout: true, script: pscommand).trim()
+        return output
+    }
+}
+// Helper function to catch the error form the powershell scripts
+def checkPsError(output, stageName) {
+    if (!output) return
+
+    if (output.contains("PS_ERROR_DESC=")) {
+        def errorDesc = output.split("PS_ERROR_DESC=")[1].trim()
+        result.retdescription = errorDesc
+        result.retStage = stageName
+        error("Error in ${stageName}: ${errorDesc}")
+    }
+}
+properties([
+    pipelineTriggers([
+        cron('0 10,22 * * 0-4')
+    ])
+])
+pipeline {
+    agent {
+        label "${agentName}"
+    }   
+    environment {  
+        VDI_BUILD_LOCATION_CE2LE = "CE2LE"
+        VDI_BUILD_LOCATION_CE1 = "CE1"
+        DAILYSCANBASEFOLDER = "C:\\Temp\\DailyBaselineVMScan"
+    }
+    stages {
+        stage("Read Config and Intialize the environment variables") {
+            steps {
+                dir("configs"){
+                    script {
+                        def configCE2LE = readJSON file: "${VDI_BUILD_LOCATION_CE2LE}-STD.json"
+                        def configCE1 = readJSON file: "${VDI_BUILD_LOCATION_CE1}-STD.json"
+
+                        //RG related Related info
+                        env.ARCHIVESTORAGEACCOUNTNAME = configCE1.ARCHIVESTORAGEACCOUNTNAME
+                        env.QUALYSARCHIVECONTAINERNAME = configCE1.QUALYSARCHIVECONTAINERNAME
+                        env.QUALYS_DAILY_REPORT_BLOBNAME_FOLDER = configCE1.QUALYS_DAILY_REPORT_BLOBNAME_FOLDER
+                        env.BASELINE_BLOBNAME_FOLDER = configCE1.BASELINE_BLOBNAME_FOLDER
+                        env.ARM_TENANT_ID = configCE1.ARM_TENANT_ID
+                        env.ARM_CLIENT_ID = configCE1.ARM_CLIENT_ID
+                        env.SMTP_USERNAME = configCE1.SMTP_Username
+
+                        //Ctrix Related info
+                        env.SubscriptionId        = configCE2LE.LE_subscriptionId
+                        env.ResourceGroupName     = configCE2LE.LEResource_GroupName
+                        env.LE_TENANT_ID          = configCE2LE.LE_TENANT_ID
+                        env.LE_CLIENT_ID          = configCE2LE.LE_CLIENT_ID
+                        env.QUALYS_USERNAME       = configCE2LE.Qualys_Username
+                        env.citrixClientId        = configCE2LE.citrixClientId
+                        env.CitrixCustomerId     = configCE2LE.LEcitrixcustomerid
+                        env.LEClient_CatalogName  = configCE2LE.LEClient_CatalogName
+                        env.LEClient_DeliveryGroupName= configCE2LE.LEDelivery_GroupName
+                        env.CitrixIdpInstanceId       = configCE2LE.CitrixIdpInstanceId
+                        env.ARM_CLIENT_ID             = configCE2LE.ARM_CLIENT_ID
+                        
+                        
+                    }
+                }
+            }
+        }
+        stage("Create and add Machines in LE Machine Catalog") {
+            steps {
+                script {
+                    try{               
+                        dir("PowerShell") {
+                            psCommand = " ./QualysValidation/Citrix-Create-Machine.ps1 -CitrixCustomerId ${env:CitrixCustomerId} -citrixClientId ${env:citrixClientId} -CatalogName ${env:LEClient_CatalogName} -DeliveryGroupName ${env:LEClient_DeliveryGroupName} -resourceGroupName ${env:ResourceGroupName} -Tenant ${env:LE_TENANT_ID} -SubscriptionId ${env:SubscriptionId} -clientId ${env:LE_CLIENT_ID} -CitrixIdpInstanceId ${env:CitrixIdpInstanceId}"
+                            def createVms = runPsWithCreds([[id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'CLIENT_SECRET'],
+                                                            [id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
+                            echo createVms
+                            checkPsError(createVms, "Create and add Machines in LE Machine Catalog")
+                        }
+                    }catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Create and add Machines in LE Machine Catalog"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage("Remove Stale entries and fetch Asset ID from the Qualys Database") {
+            steps {
+                script {
+                    try{   
+                        def scriptoutput = ""            
+                        dir("PowerShell") {
+                            echo "Running Powershell script to remove stale entries and ftech the asset ID"
+                                psCommand = ''' ./QualysValidation/Fetch-QualysDeviceAssetID.ps1'''
+                                def removestaleentries = runPsWithCreds([[id: 'QualysKey', type: 'pass', passVar: 'QUALYS_KEY']], psCommand)
+                                echo removestaleentries
+                                checkPsError(removestaleentries, "Remove Stale entries and fetch Asset ID from the Qualys Database")
+                        }
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Remove Stale entries and fetch Asset ID from the Qualys Database"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }              
+        stage("Wait for the Default Scan and Compare the Baseline Realtime Report") {
+            steps {
+                script {     
+                    try{   
+                        def scriptoutput = ""            
+                        dir("PowerShell") {
+                            echo "Running Powershell script Compare-RealtimeBaselineReport.ps1"
+                                psCommand = ''' ./QualysValidation/Compare-RealtimeBaselineReport.ps1 -username ${env:QUALYS_USERNAME} -ARCHIVESTORAGEACCOUNTNAME ${env:ARCHIVESTORAGEACCOUNTNAME} -ARCHIVECONTAINERNAME ${env:QUALYSARCHIVECONTAINERNAME} -BASELINE_BLOBNAME_FOLDER ${env:BASELINE_BLOBNAME_FOLDER} -DAILY_REPORT_BLOBNAME ${env:QUALYS_DAILY_REPORT_BLOBNAME_FOLDER}'''
+                                def waitdefaultscan = runPsWithCreds([[id: 'QualysKey', type: 'pass', passVar: 'QUALYS_KEY'],
+                                                                        [id: 'PROD-SA-SECRET', type: 'pass', passVar: 'PROD_SA_SECRET'],
+                                                                        [id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
+                                echo waitdefaultscan
+                                if(waitdefaultscan.contains("Notify Vulnerabilities")){emailrequired = 'True'}
+                                checkPsError(waitdefaultscan, "Wait for the Default Scan and Compare the Baseline Realtime Report")
+                            }
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Wait for the Default Scan and Compare the Baseline Realtime Report"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+        stage("Send an Email in case new vulnerabilities are detected") {
+            when {
+                expression { return emailrequired == 'True' }
+            }
+            steps {
+               script {
+                    try{
+                        dir("PowerShell") {
+                            echo "Running Powershell script Notify-QualysVuln.ps1"
+                                psCommand = " ./QualysValidation/Notify-QualysVuln.ps1 -TMUusername ${env:SMTP_USERNAME} | Out-String"
+                                def scriptoutput2 = runPsWithCreds([[id: 'iaftu01-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
+                                echo scriptoutput2
+                                checkPsError(scriptoutput2, "Send an Email in case new vulnerabilities are detected")
+                        }
+                    }
+                    catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Send an Email in case new vulnerabilities are detected"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            script {
+                echo "Result: ${result}"
+            }
+        }
+    }
+}   

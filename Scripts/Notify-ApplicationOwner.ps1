@@ -43,7 +43,7 @@ function Send-ScriptNotificationEmail {
     )
     #Set Variables
     $smtpServer = "tmu-cs.mail.allianz"
-    $smtpFrom = "noreply-wps-app@allianz.com"
+    $smtpFrom = "APP-CONVERSION@allianz.com"
     $timestamp = (Get-Date).ToString("yyyy-MM-dd")  # Add timestamp to subject
     $messageSubject = $Subject
  
@@ -83,8 +83,6 @@ function Get-AppID{
     # Check if the JSON file exists
     if (Test-Path $AppIDJSONPath) {
     
-        Write-Host "Reading apps from: $AppIDJSONPath"
-
         # Load JSON data
         $InputJson = Get-Content -Raw -Path $AppIDJSONPath | ConvertFrom-Json
 
@@ -139,14 +137,74 @@ try{
     $count = 1
 
     #Set the HTML tags and Table Css
-    $htmlstarttags = "<html><head><style>body{font-family:Arial,sans-serif;}.highlight{font-weight:bold;}.footer{color:red;font-weight:bold;text-align:left;margin-top:20px;}
-                        table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid black; padding: 8px; text-align: center; }th { background-color: #003781; color: white; }
-                        tr:nth-child(even) { background-color: #f2f2f2; } h2, h4 { text-align: center; } .error-header {background-color: red;color: white;}
-                        </style></head><body><p>Hello Team,</p>
-    </style></head><body><p>IAF has identified a new version of the Application. </p>
-                        <p class='footer'>**** DO NOT REPLY TO THIS MESSAGE. THIS IS A SYSTEM GENERATED EMAIL ****</p>"
-    $htmlendtags =   "<p>Thanks & Regards,<br>Automation Team</p></body></html>"
-    $table = "<table><tr><th>S.NO</th><th>App ID</th><th>AppName</th><th>Existing Version</th><th>Existing Display Name</th><th>Latest Version</th><th>Latest DisplayName</th></tr>"
+    $htmlheadtags = "<html><head><style>
+        body {
+            font-family: Calibri, Arial, sans-serif;
+            color: #333333;
+            line-height: 1.5;
+        }
+        .container {
+            border: 1px solid #d9d9d9;
+            padding: 20px;
+            border-radius: 8px;
+            
+            max-width: 650px;
+        }
+        h2 {
+            color: #003366;
+            margin-bottom: 15px;
+        }
+        .label {
+            font-weight: bold;
+            color: #003366;
+        }
+        .section {
+            margin-bottom: 12px;
+        }
+        .note {
+            font-size: 12px;
+            color: #555555;
+            margin-top: 20px;
+            border-top: 1px dashed #cccccc;
+            padding-top: 10px;
+        }
+    </style><head><body>"
+
+    $htmldivtag = "<div class='container'>
+    <h2>Dear Application Owner,</h2>
+
+    <p>You are being notified that the Application onboarding automated pipeline has identified a new version for your application and is being onboarded into the process to replace the existing version. Please find the details below.</p>
+    
+    <div class='section'>
+        <span class='label'>AppID generated in the catalogue:</span> {{AppID}}
+    </div>
+
+    <div class='section'>
+        <span class='label'>Application Name:</span> {{Application_Name}}
+    </div>
+
+    <div class='section'>
+        <span class='label'>New version:</span> {{New_version}}
+    </div>
+
+    <div class='section'>
+        <span class='label'>Existing version in Intune:</span> {{Existing_version}}
+    </div>
+
+    </div>"
+
+    $htmlendtags = "<p>You will be notified once the onboarding is completed and application ready for testing.</p>
+
+    <p>Regards,<br>
+    <strong>WPS-Application Team</strong><br>
+    <a href='https://allianzms.sharepoint.com/sites/DE1214-connect-az-technology-workplace-services-application-portfolio-management'>APM Connect Page</a></p>
+
+    <p class='note'>
+        N.B: This mailbox is not monitored. For any queries reply to this email with 
+        <strong>APP-CONVERSION@allianz.com</strong> in 'To' address.
+    </p>
+    </body>
+    </html>"
 
     #Extract the Apps deployed on Intune and skip the failed Apps
     $AppsPublished = $AppPublishedJson | Where-Object {$_.IntuneAppObjectID -ne $null} | Select-Object IntuneAppName
@@ -181,7 +239,7 @@ try{
         $AppNameLatest = Get-IntuneAppName -NameConvention $App.IntuneAppNamingConvention -AppInfo $AppDetails
 
         #Fetch the exiting version and name of the App in Intune
-        $filteredApps = $Win32AppResources | Where-Object { $_.displayName -like "*$AppDisplayName*" -and $_.notes -like "*Deployment Engineer: Intune App Factory*"}
+        $filteredApps = $Win32AppResources | Where-Object { $_.displayName -like "*$AppDisplayName*"}
 
         # If no previous versions detetcted
         if(-not $filteredApps){
@@ -189,19 +247,30 @@ try{
             $AppNameExisting = "N/A"
         }
         else{
-            $appExistingVersion = ($filteredApps | Sort-Object { [version]$_.rules.comparisonValue } -Descending)[1].displayVersion # second highest version
+            $appExistingVersion = ($filteredApps |
+                                    Where-Object {
+                                        $_.displayVersion -and
+                                        [version]::TryParse($_.displayVersion, [ref]$null)
+                                    } | Sort-Object { [version]$_.displayVersion } -Descending | Select-Object displayVersion)[1].displayVersion # second highest version
+
             $AppDetails.Version = $appExistingVersion
             $AppNameExisting = Get-IntuneAppName -NameConvention $App.IntuneAppNamingConvention -App $AppDetails
         }
 
         #Table structure for Email
-        $EmailTable = "<tr><td>$count</td><td>$AppID</td><td>$($App.IntuneAppName)</td><td>$appExistingVersion</td><td>$AppNameExisting</td><td>$($App.AppSetupVersion)</td><td>$AppNameLatest</td></tr></table>"
+        $divupdatedTable = $htmldivtag`
+                    -replace "{{AppID}}", $AppID `
+                    -replace "{{Application_Name}}", $App.IntuneAppName `
+                    -replace "{{New_version}}", $App.AppSetupVersion `
+                    -replace "{{Existing_version}}", $appExistingVersion
+
 
         #Set the Email Subject for Body Table
-        $subject = "New Version available for $($App.IntuneAppName)"
-        $body_message = $htmlstarttags + $table + ${EmailTable} + $htmlendtags
+        $subject = "Subject : Evergreen App Update notification : $($App.IntuneAppName) - new version $($App.AppSetupVersion) is being onboarded to WPS Platforms"
+        $body_message = $htmlheadtags + $divupdatedTable + $htmlendtags
 
         #Send Email for the application catalogue entry
+        Write-Host "Sending out email for $($App.IntuneAppName) - new version $($App.AppSetupVersion)."
         Send-ScriptNotificationEmail -Subject $Subject -Recipient $ToEmail -Body $body_message -CC $ccEmails -TMUusername $TMUusername -TMUpassword $TMUpassword
     }
 }

@@ -118,18 +118,20 @@ if (`$props -ne `$null) {
                 } else {
                     $destApp | Add-Member -NotePropertyName "InstallationCheck" -NotePropertyValue "Pass" -Force
                     Write-Host "  Result: Installed (Version: $($json.Version))"
-                    $installedCount++
+                    $installedCount++ 
                 }
             } catch {
                 $destApp | Add-Member -NotePropertyName "InstallationCheck" -NotePropertyValue "Failed" -Force
-                Write-Host "  Result: Invalid JSON returned (marked as Pass - fail-safe)"
+                Write-Host "  Result: Invalid JSON returned (marked as Pass - fail-safe)"  
                 $verificationFailedCount++
+                Start-Sleep -Seconds 90
             }
             
         } catch {
             $destApp | Add-Member -NotePropertyName "InstallationCheck" -NotePropertyValue "Failed" -Force
             Write-Host "  Result: Verification failed (marked as Pass - fail-safe)"
             $verificationFailedCount++
+            Start-Sleep -Seconds 90
         }
     }
     
@@ -140,7 +142,7 @@ if (`$props -ne `$null) {
     Write-Host "Verification complete. Installed: $installedCount, Not installed: $notInstalledCount, Failed: $verificationFailedCount"
     Write-Host "Updated file: $destJsonFile"
 
-    if ($notInstalledCount -eq $sourceData.Apps.Count){
+    if ($installedCount -eq 0){
         Write-Output "No Apps were installed"
     }
     

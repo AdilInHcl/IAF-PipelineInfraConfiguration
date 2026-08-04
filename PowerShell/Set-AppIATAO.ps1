@@ -27,29 +27,9 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$clientSecret = $env:CLIENT_SECRET
 )
+
+Import-Module "$($env:WORKSPACE)/Scripts/UpdateCatalogue.psm1"
 #Returns the Access Token for the Catalogue Sharepoint Access
-function Get-CatlogueAccessToken{
-    param(
-    [string]$username,
-    [string]$password
-    )
-    $body = @{
-        username = $username
-        password = $password
-    } | ConvertTo-Json
-
-    $response = Invoke-RestMethod -Method Post `
-        -Uri "$($env:APP_CATALOGUE_BASE_URL)/auth/login" `
-        -Headers @{
-            "accept" = "application/json"
-            "Content-Type" = "application/json"
-        } `
-        -Body $body
-
-    $access_token = $response.access_token
-    return $access_token
-}
-#IAT Testing for IAF
 function Get-IATAppsInfo{
     param(
         [Parameter(Mandatory = $true)]
@@ -184,7 +164,8 @@ function Set-IntuneAppGroupAssignment {
     try {
         Write-Host "Adding '$($AssignmentItem.GroupMode)' assignment with intent '$($AssignmentItem.Intent)' for group '$($AssignmentItem.GroupID)'"
 
-        $appresponse = Add-IntuneWin32AppAssignmentGroup @AppAssignmentArgs
+        $WarningVar = $null
+        $appresponse = Add-IntuneWin32AppAssignmentGroup @AppAssignmentArgs -WarningVariable WarningVar -WarningAction Continue
 
         if ($appresponse.'@odata.context'){
             return @{
@@ -192,12 +173,22 @@ function Set-IntuneAppGroupAssignment {
                 App    = $App
                 Group  = $AssignmentItem.GroupID
             }
-        }else{
-               return @{
+        }
+        elseif ($WarningVar -match "duplicate assignments of this type is not permitted") {
+            # Treat duplicate assignment as success
+            return @{
+                Status = "Success"
+                App    = $App
+                Group  = $AssignmentItem.GroupID
+                Note   = "Assignment already existed"
+            }
+        }
+        else {
+            return @{
                 Status = "Failed"
                 App    = $App
                 Group  = $AssignmentItem.GroupID
-            } 
+            }
         }
     }
     catch {
@@ -230,24 +221,7 @@ try{
 
         # Load JSON data (do not overwrite the path variable)
         Write-Host "Reading apps from: $LEVMCreationJsonPath"
-        $json = Get-Content -Raw -Path $LEVMCreationJsonPath | ConvertFrom-Json
-    
-        # Initialize a list to store IntuneAppName and Family I'd
-        $AppIDJson = @()
-
-        # Iterate through the Apps array in the JSON
-        foreach ($app in $json.Apps) {
-            $AppInfo = [PSCustomObject]@{
-                IntuneAppName = $app.IntuneAppName
-                AppID      = $app.AppID
-                CrowdstrikeScan = $app.CrowdstrikeScan
-                QualysScan = $app.QualysScan
-                WDACScan = $app.WDACScan
-            }
-            # Append the new object (fix: was appending the array to itself)
-            $AppIDJson += $AppInfo
-        }
-
+        $AppIDJson = Get-Content -Raw -Path $LEVMCreationJsonPath | ConvertFrom-Json
     }
     else {
         Write-Output "PS_ERROR_DESC= JSON file at path '$LEVMCreationJsonPath' does not exist."
@@ -255,7 +229,7 @@ try{
     }
 
     # Genrate Access Token for the Catalogue Access
-    $Token = Get-CatlogueAccessToken -username $username -password $password
+    $token = Get-CatalogueAccessToken -username $username -password $password
 
     #Columns inside the App Catalogue for IAT etsting flag and users
     $IATInfoFields = "IAT_Testing"  
@@ -266,19 +240,23 @@ try{
     $failedApps = @()
 
     #Fetch the test required for each application based on the Catalogue.
-    foreach ($App in $AppIDJson) {
+    foreach ($App in $AppIDJson.Apps) {
         $AppID = $App.AppID
         $appName  = $App.IntuneAppName
         Write-Host "##### [  Checking Testing requirement for: $appName (AppID: $AppID) ] #####"
+        Write-Host "Fetching the Scan Status for [Qualys, Crowdstrike, Wdac, Smoke Test]"
+        Write-Host "Qualys: $($App.QualysScan)"
+        Write-Host "Crowdstrike: $($App.CrowdstrikeScan)"
+        Write-Host "WDAC: $($App.WDACScan)"
+        Write-Host "SmokeTest: $($App.SmokeTest)"
 
-        Write-Host "Fetching the Scan Status for [Qualys, Crowdstrike, Wdac]"
-        if ($App.CrowdstrikeScan -ne "Pass" -or $App.QualysScan -ne "Pass" -or $App.WDACScan -ne "Pass") {
+    if ( $App.CrowdstrikeScan -ne "Pass" -or ($App.QualysScan -ne "Pass" -and $App.QualysScan -ne "Running") -or $App.WDACScan -ne "Pass" -or $App.SmokeTest -ne "Pass") {
             Write-Host "The Scans have not been completed successfully for $appName [$AppID]."  
             Write-Host "Skipping App assignation to group."  
             continue
         }
 
-        Write-Host "All 3 Scans Completed Successfully"
+        Write-Host "All 4 Scans Completed Successfully"
 
         ################## Check if IAT test required for Apps #############
         $IATRequired = Get-IATAppsInfo -AccessToken $token -AppID $AppID -Fields $IATInfoFields
@@ -288,6 +266,7 @@ try{
             ############## Fetch the IAT test users required #################
             $UserInfo = Get-IATUser -AccessToken $token -AppID $AppID -Fields $IATUserFields
             $TestingRequired = "IAT"
+            $App | Add-Member -NotePropertyName "Testing_Required" -NotePropertyValue "IAT" -Force
             Write-Host "Required testing: IAT | User: [$($UserInfo.IAT_Testers_details)]"
 
         }
@@ -295,6 +274,7 @@ try{
             #Set the App for AO testing
             $UserInfo = $null
             $TestingRequired = "AOT"
+            $App | Add-Member -NotePropertyName "Testing_Required" -NotePropertyValue "AOT" -Force
             Write-Host "Required testing: AO Testing"
         }
 
@@ -316,7 +296,7 @@ try{
         ##################### Adding the App to the IAT/AO Test group ####################
         $response = Set-IntuneAppGroupAssignment -App $appName -AssignmentItem $Group
 
-        if ($response.Status -eq "Failed" -or $update_response -eq "Failed") {
+        if ($response.Status -eq "Failed") {
             $failedApps += $App
             continue
         }
@@ -330,9 +310,16 @@ try{
                 GroupID            = $Group.GroupID
             }
         $AppsTestRequiredList += $AppTestRequiredInfo
-        Write-Host ""
+        #Set the Apps to the dev testing phase
+
+        $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ")
+        Write-Host "Updating Dev Testing End Time for $($appName) [$AppID]"
+        Update-PhaseTime -AccessToken $token -Time $timestamp  -Phase_Field "Dev_Testing_Phase_End_Time" -AppID $AppID
+        
     }
 
+    #Update the Le vm creation file with type of testing
+    $AppIDJson | ConvertTo-Json -Depth 10 | Set-Content -Path $LEVMCreationJsonPath -Encoding UTF8
     ################## validate and create a json for IAT VM creation ####################
 
     $IATResults = $AppsTestRequiredList | Where-Object {$_.TestingRequired -eq 'IAT'}

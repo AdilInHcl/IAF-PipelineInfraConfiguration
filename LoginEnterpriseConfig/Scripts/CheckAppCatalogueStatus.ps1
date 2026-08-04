@@ -1,31 +1,10 @@
 Import-Module "$($env:WORKSPACE)\LoginEnterpriseConfig\Scripts\AppUpgradeDetection.psm1"
 Import-Module "$($env:WORKSPACE)\LoginEnterpriseConfig\Scripts\AppCatalogueManager.psm1"
+Import-Module "$($env:WORKSPACE)/Scripts/UpdateCatalogue.psm1"
 
 $JsonFilePath = Join-Path $env:LEConfigJsonPath -ChildPath $env:LE_VM_inputFileName 
-function Get-CatalogueToken{
-    param(
-    [string]$username,
-    [string]$password
-    )
-    $body = @{
-        username = $username
-        password = $password
-    } | ConvertTo-Json
 
-    $response = Invoke-RestMethod -Method Post `
-        -Uri "$($env:APP_CATALOGUE_BASE_URL)/auth/login" `
-        -Headers @{
-            "accept" = "application/json"
-            "Content-Type" = "application/json"
-        } `
-        -Body $body
-
-    $access_token = $response.access_token
-    Write-Host "Access Token generated ."
-    return $access_token
-}
-function AppScopeTag 
-{
+function AppScopeTag{
    param(
         [parameter(Mandatory = $true)]
         [string]$IntuneAppName
@@ -149,7 +128,7 @@ try {
     
     Write-Host "Total apps to check: $($appsList.Count)"
     
-    $AccessToken = Get-CatalogueToken -username $env:APP_CATALOGUE_USERNAME -password $env:APP_CATALOGUE_SECRET
+    $AccessToken = Get-CatalogueAccessToken -username $env:APP_CATALOGUE_USERNAME -password $env:APP_CATALOGUE_SECRET
     
     # Process each app
     foreach ($app in $appsList) {

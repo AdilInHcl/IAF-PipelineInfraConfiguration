@@ -160,6 +160,10 @@ Process {
         Write-Output "PS_ERROR_DESC= Error message: $_ "
         exit 1
     }
+    
+
+    #Generate Token for catalogue entry (Incase App Fails to publish)
+    $token = Get-CatalogueAccessToken -username $env:APP_CATALOGUE_USERNAME -password $env:APP_CATALOGUE_SECRET
 
     if (Test-Path -Path $AppsPublishListFilePath) {
         # Read content from AppsPublishList.json file and convert from JSON format
@@ -174,9 +178,6 @@ Process {
             # Read app specific App.json manifest and convert from JSON
             $AppDataFile = Join-Path -Path $App.AppPublishFolderPath -ChildPath "App.json"
             $AppData = Get-Content -Path $AppDataFile | ConvertFrom-Json
-
-            #Generate Token for catalogue entry (Incase App Fails to publish)
-            $token = Get-CatalogueAccessToken -username $env:APP_CATALOGUE_USERNAME -password $env:APP_CATALOGUE_SECRET
 
             # Required packaging variables
             $SourceFolder = Join-Path -Path $App.AppPublishFolderPath -ChildPath $AppData.PackageInformation.SourceFolder
@@ -627,10 +628,23 @@ Process {
                 Write-Output -InputObject "Creating Win32 application"
                 Write-Output -InputObject $Win32AppArgs
                 
-                ########### Delete After Test ##################################
-                #if ($App.IntuneAppName -eq "Notepad++"){$Win32AppArgs.DetectionRule = $null}
-                ################################################################
-                $Win32App = Add-IntuneWin32App @Win32AppArgs
+                $MaxRetries  = 6
+                $RetryDelay  = 30      # seconds, doubled each attempt: 30, 60, 120, 240, 480
+                $Attempt     = 0
+                $Win32App    = $null
+
+                #$Win32App = Add-IntuneWin32App @Win32AppArgs
+                while ($Attempt -lt $MaxRetries -and $null -eq $Win32App) {
+                    $Attempt++
+                    try {
+                        $Win32App = Add-IntuneWin32App @Win32AppArgs
+                    }
+                    catch {
+                        Write-Output "$_"
+                        Write-Output -InputObject "Failed to upload to inutne on attempt $Attempt/$MaxRetries for '$($App.IntuneAppName)': ErrMsg. Retrying in $RetryDelay seconds..."
+                        Start-Sleep -Seconds $RetryDelay
+                    }
+                }
 
                 try {
                     # Send Log Analytics payload with published app details
@@ -647,11 +661,6 @@ Process {
                 }
 
                 try {
-
-                    ########### Delete After Test ##############################
-                    #if ($App.IntuneAppName -eq "Notepad++"){$Win32App.id = $null}
-                    #if ($App.IntuneAppName -in @("Notepad++","MySQLWorkbench")){$Win32App.id = $null}
-                    ############################################################
 
                     # Construct new application custom object with required properties
                     $AppListItem = [PSCustomObject]@{
@@ -700,6 +709,9 @@ Process {
             Write-Output -InputObject "App list file contains the following items: $($AppsAssignList.IntuneAppName -join ", ")"
             Out-File -InputObject $AppsAssignListJSON -FilePath $AppsAssignListFilePath -Force -ErrorAction "Stop"
         }
+
+        #Generate Token for catalogue entry (Incase App Fails to publish)
+        $token = Get-CatalogueAccessToken -username $env:APP_CATALOGUE_USERNAME -password $env:APP_CATALOGUE_SECRET
 
         # Handle next stage execution or not if no new applications are to be assigned
         if ($AppsAssignList.Count -eq 0) {

@@ -17,7 +17,7 @@ function Send-ScriptNotificationEmail {
 
     # Set Variables
     $smtpServer = "tmu-cs.mail.allianz"
-    $smtpFrom = "noreply-wps-app@allianz.com"
+    $smtpFrom = "APP-CONVERSION@allianz.com"
     $messageSubject = $Subject
 
     $UserName = $TMUusername
@@ -115,9 +115,15 @@ $finalBody = $htmlStarttags + $body + $tableHtml + $htmlEndtags
 $EmailjsonPath = Join-Path -Path (Join-Path -Path $env:BUILD_SOURCESDIRECTORY -ChildPath "configs") -ChildPath "EmailRecipients.json"
 $data = Get-Content $EmailjsonPath | ConvertFrom-Json
 
-# Extract and split 'Cc' emails into array for Sharepoint Catalogue
-$EmailTo = $data.IAFAppPublishStatus.To
-$EmailCC = $data.IAFAppPublishStatus.CC
+# Extract and split To and  'Cc' emails based on the the pipeline type
+if($env:PIPELINE_TYPE -eq "E2E"){
+    $EmailTo = $data.IAFAppPublishStatus.To
+    $EmailCC = $data.IAFAppPublishStatus.CC
+}
+else{
+    $EmailTo = $data.IAFAppPublishStatusTest.To
+    $EmailCC = $data.IAFAppPublishStatusTest.CC
+}
 
 #PDF Path of the report
 $PDFFIlepath = Join-Path -Path (Join-Path -Path $env:BUILD_SOURCESDIRECTORY -ChildPath 'configs') -ChildPath "Intune_App_Report.pdf"

@@ -14,7 +14,6 @@
             "ApplicationOwner E-mail will come from App.json"
         ],
         "CC":  [
-            "APP-CONVERSION@allianz.com",
             "avc-hcl-packaging@allianz.com",
             "wps-apm-engineering@allianz.com"
         ]		
@@ -28,7 +27,6 @@
 
         ],
         "CC":  [
-           "APP-CONVERSION@allianz.com",
            "wps-apm-engineering@allianz.com"
         ]		
     },
@@ -38,7 +36,6 @@
         "hcl-wps-testing@allianz.com"
         ],
         "CC":  [
-            "APP-CONVERSION@allianz.com",
             "avc-hcl-packaging@allianz.com",
             "amc-avcc-app-operationalsupport@allianz.com",
             "wps-apm-engineering@allianz.com"
@@ -51,8 +48,7 @@
         ],
         "CC":  [
             "avc-hcl-packaging@allianz.com",
-            "amc-avcc-app-operationalsupport@allianz.com",
-            "APP-CONVERSION@allianz.com"
+            "amc-avcc-app-operationalsupport@allianz.com"
         ]		
     },
     "IAFPipelineFailureNotification": {
@@ -62,7 +58,6 @@
             "amc-avcc-app-operationalsupport@allianz.com"
         ],
         "CC":  [
-             "APP-CONVERSION@allianz.com",
              "wps-apm-engineering@allianz.com",
              "a-hcl-global-automation@allianz.com"
         ]		

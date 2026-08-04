@@ -1,9 +1,19 @@
 {
   "TU": [
         "extern.aflea01_non-personal-identity@allianz.com",
-        "extern.aflea02_non-personal-identity@allianz.com",
+	    "extern.aflea02_non-personal-identity@allianz.com",
         "extern.aflea03_non-personal-identity@allianz.com",
         "extern.aflea04_non-personal-identity@allianz.com",
-        "extern.aflea05_non-personal-identity@allianz.com"
+        "extern.aflea05_non-personal-identity@allianz.com",
+        "extern.aflea06_non-personal-identity@allianz.com",
+        "extern.aflea07_non-personal-identity@allianz.com",
+        "extern.aflea08_non-personal-identity@allianz.com",
+        "extern.aflea09_non-personal-identity@allianz.com",
+        "extern.aflea10_non-personal-identity@allianz.com",
+        "extern.aflea11_non-personal-identity@allianz.com",
+        "extern.aflea12_non-personal-identity@allianz.com",
+        "extern.aflea13_non-personal-identity@allianz.com",
+        "extern.aflea14_non-personal-identity@allianz.com",
+        "extern.aflea15_non-personal-identity@allianz.com"
 		]
 }

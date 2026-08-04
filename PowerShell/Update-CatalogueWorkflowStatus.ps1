@@ -9,7 +9,7 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$TMUpassword = $env:SMTP_PASSWORD
 )
-
+Import-Module "$($env:WORKSPACE)/Scripts/UpdateCatalogue.psm1"
 #Update the Catalogue with status for each App
 function Update-CatlogueWorkflowStatus {
     param(
@@ -106,28 +106,6 @@ function Update-CatlogueWorkflowStatus {
         }
     }
 }
-#Returns the Access Token for the Catalogue Sharepoint Access
-function Get-CatlogueAccessToken{
-    param(
-    [string]$username,
-    [string]$password
-    )
-    $body = @{
-        username = $username
-        password = $password
-    } | ConvertTo-Json
-
-    $response = Invoke-RestMethod -Method Post `
-        -Uri "$($env:APP_CATALOGUE_BASE_URL)/auth/login" `
-        -Headers @{
-            "accept" = "application/json"
-            "Content-Type" = "application/json"
-        } `
-        -Body $body
-
-    $access_token = $response.access_token
-    return $access_token
-}
 #Send Emails to catalogue entry
 function Send-ScriptNotificationEmail {
     param(
@@ -139,7 +117,7 @@ function Send-ScriptNotificationEmail {
     )
     #Set Variables
     $smtpServer = "tmu-cs.mail.allianz"
-    $smtpFrom = "noreply-wps-app@allianz.com"
+    $smtpFrom = "extern.iaftu01_non-personal-identity@allianz.com"
     $timestamp = (Get-Date).ToString("yyyy-MM-dd")  # Add timestamp to subject
     $messageSubject = $Subject
     $Body = " "
@@ -158,15 +136,6 @@ function Send-ScriptNotificationEmail {
 try{
     #Fetch the json file where all the information regarding IAT VM is present
     $Email = $false
-    $IATVMCreationFileName = "APP_IAT.json"
-    $IATVMCreationDataFilePath = Join-Path -Path $env:BUILD_BINARIESDIRECTORY -ChildPath $IATVMCreationFileName
-
-    if (Test-Path $IATVMCreationDataFilePath){
-        $IATVMCreationData = Get-Content -Path $IATVMCreationDataFilePath| ConvertFrom-Json
-        
-        # Apps that need IAT testing
-        $IATApps = $IATVMCreationData | Select-Object IntuneAppName, AppID -Unique
-    }
     
     #Fetch the json file where all the information regarding VM is present
     $LEVMCreationFileName = $env:Input_File_name
@@ -174,11 +143,12 @@ try{
     $LEVMCreationData = Get-Content -Path $LEVMCreationDataFilePath| ConvertFrom-Json
 
     # Apps that need AO testing
-    $AO = $LEVMCreationData.Apps | Where-Object {$_.IntuneAppName -notin @($IATVMCreationData.IntuneAppName)}
-    $AOApps = $AO | Where-Object {$_.CrowdstrikeScan -eq "Pass" -and $_.QualysScan -eq "Pass" -and $_.WDACScan -eq "Pass"}
+    $PassedApps = $LEVMCreationData.Apps | Where-Object {$_.CrowdstrikeScan -eq "Pass" -and $_.QualysScan -in @("Pass", "Running") -and $_.WDACScan -eq "Pass" -and $_.SmokeTest -eq "Pass"}
+    $AOApps = $PassedApps | Where-Object {$_.Testing_Required -eq "AOT"}
+    $IATApps = $PassedApps | Where-Object {$_.Testing_Required -eq "IAT"}
 
     #Fetch access token from catalogue status
-    $token = Get-CatlogueAccessToken -username $username -password $password
+    $token = Get-CatalogueAccessToken -username $username -password $password
 
     # Update the ctalogue for the Apps that need AO testing
     if($AOApps){
@@ -208,44 +178,50 @@ catch{
     exit 1
 }
 
+# This part has been decommisoned #
 ###################################################
 # Send the email to  for record keeping
 ###################################################
-if ($Email){
-    try{
-        # Load JSON from file
-        $EmailjsonPath = Join-Path -Path (Join-Path -Path $env:BUILD_SOURCESDIRECTORY -ChildPath "configs") -ChildPath "EmailRecipients.json"
-        $data = Get-Content $EmailjsonPath | ConvertFrom-Json
+# if ($Email){
+#     try{
+#         # Load JSON from file
+#         $EmailjsonPath = Join-Path -Path (Join-Path -Path $env:BUILD_SOURCESDIRECTORY -ChildPath "configs") -ChildPath "EmailRecipients.json"
+#         $data = Get-Content $EmailjsonPath | ConvertFrom-Json
 
-        # Extract 'To' email for Sharepoint Catalogue
-        $toEmail = $data.SharePointCatalogue.To
+#         # Extract 'To' email for Sharepoint Catalogue
+#         $toEmail = $data.SharePointCatalogue.To
 
-        # Extract and split 'Cc' emails into array for Sharepoint Catalogue
-        $ccEmails = $data.SharePointCatalogue.CC
+#         # Extract and split 'Cc' emails into array for Sharepoint Catalogue
+#         $ccEmails = $data.SharePointCatalogue.CC
 
-        foreach($Appintesting in $LEVMCreationData.Apps){
+#         foreach($Appintesting in $LEVMCreationData.Apps){
+
+#             if (-not($Appintesting.Testing_Required)){
+#                 Write-Host "No testing identified for $($Appintesting.IntuneAppName). Skipping  Email..."
+#                 continue
+#             }
             
-            if ($Appintesting.IntuneAppName -in @($IATVMCreationData.IntuneAppName)){
-                # set subject line to IAT testing
-                $testing = "Moved to IAT Testing"
-            }
-            else{
-                # set subject line to AO testing
-                $testing = "Moved to AO Testing"
-            }
+#             if ($Appintesting.IntuneAppName -in @($IATApps.IntuneAppName)){
+#                 # set subject line to IAT testing
+#                 $testing = "Moved to IAT Testing"
+#             }
+#             else{
+#                 # set subject line to AO testing
+#                 $testing = "Moved to AO Testing"
+#             }
             
-            $Subject = "IAF App:$($Appintesting.AppID):$($Appintesting.FamilyID):$($Appintesting.IntuneAppName):$($Appintesting.AppSetupVersion):$($testing)"
+#             $Subject = "IAF App:$($Appintesting.AppID):$($Appintesting.FamilyID):$($Appintesting.IntuneAppName):$($Appintesting.AppSetupVersion):$($testing)"
             
-            #Send Email for the application catalogue entry 
-            Write-Host "Sending Out Email for [$($Appintesting.IntuneAppName)] version: $($Appintesting.AppSetupVersion) [$testing]"
-            Send-ScriptNotificationEmail -Subject $Subject -Recipient $toEmail -CC $ccEmails -TMUusername $TMUusername -TMUpassword $TMUpassword
-        }
-    }
-    catch{
-        Write-Output "PS_ERROR_DESC= Failed to send the email for Catalogue updation."
-        exit 1
-    }
-}
-else{
-    Write-Host "No Apps found for Email."
-}
+#             #Send Email for the application catalogue entry 
+#             Write-Host "Sending Out Email for [$($Appintesting.IntuneAppName)] version: $($Appintesting.AppSetupVersion) [$testing]"
+#             Send-ScriptNotificationEmail -Subject $Subject -Recipient $toEmail -CC $ccEmails -TMUusername $TMUusername -TMUpassword $TMUpassword
+#         }
+#     }
+#     catch{
+#         Write-Output "PS_ERROR_DESC= Failed to send the email for Catalogue updation."
+#         exit 1
+#     }
+# }
+# else{
+#     Write-Host "No Apps found for Email."
+# }

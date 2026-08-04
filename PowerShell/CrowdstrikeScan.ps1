@@ -345,7 +345,6 @@ try{
 
         try{
             # Execute the scan command on the VM
-            Write-Host "Initiate Crowdstrike Scan[$vnName]"
             $command = Invoke-AzVMRunCommand -ResourceGroupName $resourceGroupName -Name $vmName -CommandId 'RunPowerShellScript' -ScriptString $Crowdstrikescript
 
             # Extract the Scan ID from the command output
@@ -358,7 +357,7 @@ try{
             continue
             }
 
-            Write-Host "OnDemand Crowdstrike Scan Intitiated on $vmName "
+            Write-Host "<< OnDemand Crowdstrike Scan Intitiated on $vmName >>"
             $vm.Triggered = "Yes"
             $vm.ScanID = $scanId
 
@@ -370,6 +369,7 @@ try{
         }   
     }
 
+    Start-Sleep -Seconds (1 * 60)
     #==========================================================================================
     #Wait params for Scan to complete
     #==========================================================================================

@@ -17,7 +17,6 @@
             "ApplicationOwner E-mail will come from App.json"
         ],
         "CC":  [
-            "APP-CONVERSION@allianz.com",
             "avc-hcl-packaging@allianz.com",
             "wps-apm-engineering@allianz.com"
         ]		
@@ -31,7 +30,6 @@
 
         ],
         "CC":  [
-           "APP-CONVERSION@allianz.com",
            "wps-apm-engineering@allianz.com"
         ]		
     },
@@ -41,10 +39,11 @@
         "hcl-wps-testing@allianz.com"
         ],
         "CC":  [
-            "APP-CONVERSION@allianz.com",
             "avc-hcl-packaging@allianz.com",
             "amc-avcc-app-operationalsupport@allianz.com",
-            "wps-apm-engineering@allianz.com"
+            "wps-apm-engineering@allianz.com",
+            "extern.ahmad_daniyal@allianz.de",
+            "extern.ravichandran_seema@allianz.de"
         ]	
     },
     "IAFPipelineSuccessNotification": {
@@ -54,8 +53,9 @@
         ],
         "CC":  [
             "avc-hcl-packaging@allianz.com",
-            "amc-avcc-app-operationalsupport@allianz.com",
-            "APP-CONVERSION@allianz.com"
+            "extern.ansari_mo-adil@allianz.de",
+            "extern.ahmad_daniyal@allianz.de",
+            "extern.ravichandran_seema@allianz.de"
         ]		
     },
     "IAFPipelineFailureNotification": {
@@ -65,9 +65,11 @@
             "amc-avcc-app-operationalsupport@allianz.com"
         ],
         "CC":  [
-             "APP-CONVERSION@allianz.com",
              "wps-apm-engineering@allianz.com",
-             "a-hcl-global-automation@allianz.com"
+             "a-hcl-global-automation@allianz.com",
+            "extern.ansari_mo-adil@allianz.de",
+            "extern.ahmad_daniyal@allianz.de",
+            "extern.ravichandran_seema@allianz.de"
         ]		
     },
     "IAFModuleUpdate": {  
@@ -90,14 +92,55 @@
         ],
         "CC": [
             "wps-apm-engineering@allianz.com",
-            "APP-CONVERSION@allianz.com",
             "extern.ansari_mo-adil@allianz.de",
             "extern.ahmad_daniyal@allianz.de",
             "extern.vandana_pridhviraj1@allianz.de",
             "kumar.san@hcltech.com",
-            "ivan.bakhmutov@hcltech.com",
             "german.simonson@hcltech.com",
             "carsten.lahme@hcltech.com"
         ]		
+    },
+    "IAFAppPublishStatusTest": {  
+        "Description": "Email configuration details utilize to send notifications to automation team for app publish status.",      
+        "To":  [
+            "avc-hcl-packaging@allianz.com"
+        ],
+        "CC":  [
+            "extern.ansari_mo-adil@allianz.de",
+            "extern.ahmad_daniyal@allianz.de",
+            "extern.vandana_pridhviraj1@allianz.de",
+            "extern.simonson_german1@allianz.de",
+            "extern.sakeeth_nudurupati-sai@allianz.de",
+            "extern.b-m_nitin@allianz.de"
+        ]		
+    },
+    "QualysDailyScan": {  
+        "Description": "Email configuration details utilize to send notifications to infra team whenever additional vulnerabilities are detected after the baseline image creation.",      
+        "To":  [
+            "extern.b-m_nitin@allianz.de",
+            "extern.sakeeth_nudurupati-sai@allianz.de"
+        ],
+        "CC":  [
+            "extern.ansari_mo-adil@allianz.de",
+            "extern.ahmad_daniyal@allianz.de",
+            "german.simonson@hcltech.com"
+
+        ]		
+    },
+    "IATVMFail": {  
+        "Description": "Email configuration details utilize to send notifications to automation team whenever IAT VM fails to be assigned to a user.",      
+        "To":  [
+            "extern.ansari_mo-adil@allianz.de",
+            "extern.ahmad_daniyal@allianz.de"
+        ]	
+    },
+    "DeletionEmailStatus": {  
+        "Description": "Email configuration details utilize to send notifications regarding the deletion of an app from PROD.",      
+        "To":  [
+            "extern.ansari_mo-adil@allianz.de",
+            "extern.vandana_pridhviraj1@allianz.de",
+            "extern.ahmad_daniyal@allianz.de"
+
+        ]	
     }
 }

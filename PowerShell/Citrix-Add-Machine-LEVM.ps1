@@ -27,6 +27,7 @@ param(
 )
 Import-Module Az.Accounts
 Import-Module "$($env:WORKSPACE)/Scripts/UpdateCatalogue.psm1"
+Import-Module "$($env:WORKSPACE)/Scripts/CitrixConnect.psm1"
 Set-ExecutionPolicy Bypass -Scope Process -Force
 asnp citrix.*
 
@@ -47,11 +48,7 @@ $EmailCount = ($LEVMCreationData.Apps|Measure).count
 #                                    Login to Citrix
 ##########################################################################################################
 try {
-    # Connect to Citrix Cloud
-    Set-XDCredentials -CustomerId $CitrixCustomerId -APIKey $citrixClientId -SecretKey $citrixPassword -ProfileType CloudApi #-StoreAs "CitrixEUConnection" -Verbose
-    Write-Host "Credentials Set.."
-    Get-XDAuthentication #-ProfileName "CitrixEUConnection" -Verbose
-    Write-Host "Successfully logged in to the Citrix Cloud"
+    Connect-Citrix
 }
 catch{
     Update-CatlogueStatus -AccessToken $token -Apps "All" -Reason "IAF - LE VM Creation failed" -InputFilePath $LEVMCreationDataFilePath

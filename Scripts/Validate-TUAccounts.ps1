@@ -30,6 +30,7 @@ param (
     [ValidateNotNullOrEmpty()]
     [string]$citrixPassword = $env:citrixPassword
 )
+Import-Module "$($env:WORKSPACE)/Scripts/CitrixConnect.psm1"
 
 #Fetch the Free Group Details from Intune
 function Validate-VMAssignment {
@@ -43,11 +44,7 @@ function Validate-VMAssignment {
 }
 
 # Connct to Citrix Cloud
-Set-XDCredentials -CustomerId $CitrixCustomerId -APIKey $citrixClientId -SecretKey $citrixPassword -ProfileType CloudApi -StoreAs "CitrixEUConnection"
-
-#connection
-Get-XDAuthentication -ProfileName "CitrixEUConnection"
-Write-Host "Successfully logged in to the Citrix Cloud"
+Connect-Citrix
 
 # Construct path for AppsPublishList.json file created in previous stage
 $AppsPublishListFileName = "AppsPublishList.json"

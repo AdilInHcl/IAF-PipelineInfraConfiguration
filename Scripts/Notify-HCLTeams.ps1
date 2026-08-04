@@ -43,7 +43,7 @@ function Send-ScriptNotificationEmail {
     )
     #Set Variables
     $smtpServer = "tmu-cs.mail.allianz"
-    $smtpFrom = "noreply-wps-app@allianz.com"
+    $smtpFrom = "APP-CONVERSION@allianz.com"
     $messageSubject = $Subject
  
     $UserName = $TMUusername
@@ -167,8 +167,12 @@ try{
         $AppNameLatest = Get-IntuneAppName -NameConvention $App.IntuneAppNamingConvention -AppInfo $AppDetails
 
         #Fetch the exiting version and name of the App in Intune
-        $filteredApps = $Win32AppResources | Where-Object { $_.displayName -like "*$AppDisplayName*" -and $_.notes -like "*Deployment Engineer: Intune App Factory*"}
-        $appExistingVersion = ($filteredApps | Sort-Object { [version]$_.rules.comparisonValue } -Descending)[1].displayVersion # second highest version
+        $filteredApps = $Win32AppResources | Where-Object { $_.displayName -like "*$AppDisplayName*" -and $_.notes -like "*Intune App Factory*"}
+        $appExistingVersion = ($filteredApps |
+                                    Where-Object {
+                                        $_.displayVersion -and
+                                        [version]::TryParse($_.displayVersion, [ref]$null)
+                                    } | Sort-Object { [version]$_.displayVersion } -Descending | Select-Object displayVersion)[1].displayVersion # second highest version
         $AppDetails.Version = $appExistingVersion
         $AppNameExisting = Get-IntuneAppName -NameConvention $App.IntuneAppNamingConvention -App $AppDetails
 

@@ -56,8 +56,6 @@ Process {
         foreach ($App in $AppsPrepareList) {
             Write-Output -InputObject "[APPLICATION: $($App.IntuneAppName)] - Initializing"
 
-            $token = Get-CatalogueAccessToken -username $env:APP_CATALOGUE_USERNAME -password $env:APP_CATALOGUE_SECRET #Created token for catalogue entry
-
             # Track whether processing succeeded for this app
             $AppProcessingSucceeded = $true
             $IconFileName = $null
@@ -144,10 +142,6 @@ Process {
                         "App.json" {
                             # Read file App.json content
                             Write-Output -InputObject "Reading content of app specific file $($AppFileName)"
-
-                            #################### Delete After test #################################
-                            #if ($App.IntuneAppName -eq 'Notepad++'){$AppFilePath = $null}
-                            #################### Delete After test ################################
 
                             Write-Output -InputObject "File path: $($AppFilePath)"
                             $AppFileContent = Get-Content -Path $AppFilePath -ErrorAction Stop | ConvertFrom-Json
@@ -339,6 +333,8 @@ Process {
 
 
         # Construct new json file with new applications to be published
+        $token = Get-CatalogueAccessToken -username $env:APP_CATALOGUE_USERNAME -password $env:APP_CATALOGUE_SECRET #Created token for catalogue entry
+        
         if ($AppsPublishList.Count -ge 1) {
             $AppsPublishListJSON = $AppsPublishList | ConvertTo-Json -Depth 3
             Write-Output -InputObject "Creating '$($AppsPublishListFileName)' in: $($AppsPublishListFilePath)"

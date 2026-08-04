@@ -11,6 +11,7 @@ param (
     [ValidateNotNullOrEmpty()]
     [string]$ClientSecret = $env:CLIENT_SECRET
 )
+Import-Module "$($env:WORKSPACE)/Scripts/UpdateCatalogue.psm1"
 function Set-ApplicationJsonData {
         <#
         .SYNOPSIS
@@ -33,14 +34,11 @@ function Set-ApplicationJsonData {
             1.0.0 - (2025-03-) Script created
         #>
         param(
-            [parameter(Mandatory = $true, HelpMessage = "Application Name of the published App on Intune.")]
-            [ValidateNotNullOrEmpty()]
+            [parameter( HelpMessage = "Application Name of the published App on Intune.")]
             [string]$AppName,
-            [parameter(Mandatory = $true, HelpMessage = "Counter  for the output Table")]
-            [ValidateNotNullOrEmpty()]
+            [parameter( HelpMessage = "Counter  for the output Table")]
             [int]$counter,
-            [parameter(Mandatory = $true, HelpMessage = "App ID for the Intune APP Name")]
-            [ValidateNotNullOrEmpty()]
+            [parameter( HelpMessage = "App ID for the Intune APP Name")]
             [string]$AppID
             )
 
@@ -214,6 +212,8 @@ if (Test-Path -Path $AppsDownloadListFilePath) {
     $Counter = 0
     $pass = 0
     $failedApps = New-Object -TypeName "System.Collections.ArrayList"
+    
+    $token = Get-CatalogueAccessToken -username $env:APP_CATALOGUE_USERNAME -password $env:APP_CATALOGUE_SECRET #Created token for catalogue entry
 
     foreach ($App in $AppsDownloadList) {
         $Counter ++ 
@@ -237,6 +237,11 @@ if (Test-Path -Path $AppsDownloadListFilePath) {
         if ($TableRow -match "<td style='color:green;'>Published</td>") {
             Write-Output "$Counter : [Checking Status For: $AppName] --> Published"
             $pass ++
+            $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ")
+            Write-Host "Updating Packaging End Time for $($App.IntuneAppName) [$AppID]"
+            if($env:PIPELINE_TYPE -eq "E2E"){
+                Update-PhaseTime -AccessToken $token -Time $timestamp  -Phase_Field "Packaging_Phase_End_Time" -AppID $AppID
+            }
         }
         else{
             $failedApps.Add($App) | Out-Null #Failed to published app list
@@ -279,8 +284,8 @@ if (Test-Path -Path $AppsDownloadListFilePath) {
     $HTMLReport = $HTMLTemplate -replace "{{TABLE_ROWS}}", $TableRows`
                                 -replace "{{GENERATED_TIME}}", $time`
                                 -replace "{{BUILD_ID}}", $env:BUILD_ID`
-                                -replace "{{ERROR_LOGS}}", $ErrorLog`
-                                -replace "{{ONBOARDING_STATUS}}", $OnboardingStatus
+                                -replace "{{ERROR_LOGS}}", $ErrorLog
+                                #-replace "{{ONBOARDING_STATUS}}", $OnboardingStatus
 
     # Save the Final Report
     $HTMLReport | Out-File -Encoding utf8 -FilePath $ReportPath

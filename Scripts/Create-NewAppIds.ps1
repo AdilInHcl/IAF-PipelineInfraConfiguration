@@ -25,28 +25,7 @@ param(
     [string]$password = $env:APP_CATALOGUE_SECRET
 )
 
-#Returns the Access Token for the Catalogue Sharepoint Access
-function Get-AccessToken{
-    param(
-    [string]$username,
-    [string]$password
-    )
-    $body = @{
-        username = $username
-        password = $password
-    } | ConvertTo-Json
-
-    $response = Invoke-RestMethod -Method Post `
-        -Uri "$($env:APP_CATALOGUE_BASE_URL)/auth/login" `
-        -Headers @{
-            "accept" = "application/json"
-            "Content-Type" = "application/json"
-        } `
-        -Body $body
-
-    $access_token = $response.access_token
-    return $access_token
-}
+Import-Module "$($env:WORKSPACE)/Scripts/UpdateCatalogue.psm1"
 
 # Returns Family ID 
 function Get-AppDetails {
@@ -169,7 +148,7 @@ try{
     }
 
     # Genrate Access Token for the Catalogue Access
-    $token = Get-AccessToken -username $username -password $password
+    $token = Get-CatalogueAccessToken -username $username -password $password
     
     foreach($App in $AppIdJson){
         

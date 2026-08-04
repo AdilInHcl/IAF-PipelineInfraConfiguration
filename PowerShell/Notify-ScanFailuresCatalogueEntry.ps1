@@ -31,7 +31,7 @@ function Send-ScriptNotificationEmail {
     )
     #Set Variables
     $smtpServer = "tmu-cs.mail.allianz"
-    $smtpFrom = "noreply-wps-app@allianz.com"
+    $smtpFrom = "extern.iaftu01_non-personal-identity@allianz.com"
     $timestamp = (Get-Date).ToString("yyyy-MM-dd")  # Add timestamp to subject
     $messageSubject = $Subject
     $Body = " "
@@ -72,7 +72,7 @@ try{
     $sleepcounter = 1
     foreach($App in $LEVMCreationJsonContent.Apps){
         
-        if ($App.CrowdstrikeScan -ne "Pass" -or $App.QualysScan -ne "Pass" -or $App.WDACScan -ne "Pass"){
+        if ( $App.CrowdstrikeScan -ne "Pass" -or ($App.QualysScan -ne "Pass" -and $App.QualysScan -ne "Running") -or $App.WDACScan -ne "Pass" -or $App.SmokeTest -ne "Pass"){
 
             #Subject for the catalogue entry in the format ---> App:<FamilyID>:<Application Name>:<IAF Version>
             $subject = "IAF App:$($App.AppID):$($App.FamilyID):$($App.IntuneAppName):$($App.AppSetupVersion):Dev Testing Failed"

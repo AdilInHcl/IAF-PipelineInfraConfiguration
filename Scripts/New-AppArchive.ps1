@@ -157,19 +157,17 @@ Process {
                 Write-Output -InputObject "Compressing path '$($App.AppPublishFolderPath)' into file: $($AppArchiveFileName)"
                 Compress-Archive -Path "$($App.AppPublishFolderPath)\*" -DestinationPath $AppArchiveFilePath -ErrorAction "Stop"
 
-                ########### Delete After Test ##############################
-                    # if ($App.IntuneAppName -eq "Notepad++"){$AppArchiveFilePath = $null}
-                    #if ($App.IntuneAppName -in @("Notepad++","MySQLWorkbench")){$AppArchiveFilePath = "DummyFail"}
-                ############################################################
-
                 try {
                     # Upload current archive file to storage account
                     if (Test-Path -Path $AppArchiveFilePath) {
                         Write-Output -InputObject "Uploading current app publish archive file to storage account: $($AppArchiveFilePath)"
                         Write-Output -InputObject "Storage account name: $($StorageAccountName)"
                         Write-Output -InputObject "Storage account container name: $($ContainerName)"
-                        Set-AzureContainerContent -StorageAccountName $StorageAccountName -ContainerName $ContainerName -StorageAccountKey $StorageAccountKey -FilePath $AppArchiveFilePath -ErrorAction "Stop"
-
+                        
+                        $UploadStatus = Set-AzureContainerContent -StorageAccountName $StorageAccountName -ContainerName $ContainerName -StorageAccountKey $StorageAccountKey -FilePath $AppArchiveFilePath -ErrorAction "Stop"
+                        $AppArchive_Container_URL = "$($UploadStatus.Context.BlobEndPoint)$($ContainerName)/$($UploadStatus.Name)"
+                        Update-FinalPackageLocation -AccessToken $token -URL $AppArchive_Container_URL -AppID $AppID
+                        
                         # Remove current archive file after upload
                         Write-Output -InputObject "Removing current app publish archive file: $($AppArchiveFilePath)"
                         Remove-Item -Path $AppArchiveFilePath -Force
@@ -180,7 +178,7 @@ Process {
                     }
                     else {
                         
-                        Write-Warning"$($MyInvocation.MyCommand): Failed to detect current app publish archive file with expected full path: $($AppArchiveFilePath)"
+                        Write-Warning "$($MyInvocation.MyCommand): Failed to detect current app publish archive file with expected full path: $($AppArchiveFilePath)"
                     }
                 }
                 catch [System.Exception] {

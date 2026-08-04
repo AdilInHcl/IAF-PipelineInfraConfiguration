@@ -63,7 +63,7 @@ pipeline {
                         env.APP_CATALOGUE_BASE_URL = "${imagesettings_CE1.APP_CATALOGUE_BASE_URL}"
 
                         // Citrix related info
-                        env.Citrix_CustomerId         = imagesettings_CE2LE.LEcitrixcustomerid
+                        env.CitrixCustomerId         = imagesettings_CE2LE.LEcitrixcustomerid
                         env.LEClient_CatalogName      = imagesettings_CE2LE.LEClient_CatalogName
                         env.LEClient_DeliveryGroupName= imagesettings_CE2LE.LEDelivery_GroupName
                         env.SubscriptionId            = imagesettings_CE2LE.LE_subscriptionId
@@ -87,7 +87,7 @@ pipeline {
                 script {
                     try{               
                         dir("PowerShell") {
-                            psCommand = " ./Citrix-Add-Machine-LEVM.ps1 -CitrixCustomerId ${env:Citrix_CustomerId} -citrixClientId ${env:citrixClientId} -CatalogName ${env:LEClient_CatalogName} -DeliveryGroupName ${env:LEClient_DeliveryGroupName} -Tenant ${env:LE_TENANT_ID} -SubscriptionId ${env:SubscriptionId} -clientId ${env:LE_CLIENT_ID} -resourcegroupname ${env:ResourceGroupName} -CitrixIdpInstanceId ${env:CitrixIdpInstanceId}"
+                            psCommand = " ./Citrix-Add-Machine-LEVM.ps1 -CitrixCustomerId ${env:CitrixCustomerId} -citrixClientId ${env:citrixClientId} -CatalogName ${env:LEClient_CatalogName} -DeliveryGroupName ${env:LEClient_DeliveryGroupName} -Tenant ${env:LE_TENANT_ID} -SubscriptionId ${env:SubscriptionId} -clientId ${env:LE_CLIENT_ID} -resourcegroupname ${env:ResourceGroupName} -CitrixIdpInstanceId ${env:CitrixIdpInstanceId}"
                             def createVms = runPsWithCreds([[id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'CLIENT_SECRET'],
                                                             [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
                                                             [id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)

@@ -190,8 +190,6 @@ Process {
         foreach ($App in $AppsDownloadList) {
             Write-Output -InputObject "[APPLICATION: $($App.IntuneAppName)] - Initializing"
 
-            $token = Get-CatalogueAccessToken -username $env:APP_CATALOGUE_USERNAME -password $env:APP_CATALOGUE_SECRET #Created token for catalogue entry
-
             # Construct directory structure for setup installers of the current app item based on pipeline workspace directory path and app package folder name property
             $AppSetupFolderPath = Join-Path -Path $env:PIPELINE_WORKSPACE -ChildPath "Installers\$($App.AppFolderName)"
 
@@ -207,10 +205,6 @@ Process {
                     }
                     default {
                         Write-Output -InputObject "Attempting to download '$($App.AppSetupFileName)' from: $($App.URI)"
-
-                    ########################################## Delete After Test ##################################
-                                            #if ($App.IntuneAppName -eq "Notepad++"){$App.URI = "TestURL"}
-                    ########################################### Delete After Test ##################################
 
                         Save-File -URI $App.URI -Path $AppSetupFolderPath -Name $App.AppSetupFileName -ErrorAction "Stop"
                     }
@@ -302,6 +296,8 @@ Process {
         }
 
         # Construct new json file with new applications to be published
+        $token = Get-CatalogueAccessToken -username $env:APP_CATALOGUE_USERNAME -password $env:APP_CATALOGUE_SECRET #Created token for catalogue entry
+
         if ($AppsPrepareList.Count -ge 1) {
             $AppsPrepareListJSON = $AppsPrepareList | ConvertTo-Json -Depth 3
             Write-Output -InputObject "Creating '$($AppsPrepareListFileName)' in: $($AppsPrepareListFilePath)"
@@ -322,6 +318,13 @@ Process {
             Update-CatlogueStatus -AccessToken $token -Apps "All" -InputFilePath $BinaryLocation  -Reason "IAF - Evergreen Source download failed"
         }
         else {
+            #Set the Packaging_Phase_Start_Time
+            $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ")
+            foreach ($app in $AppsPrepareList) {
+                $AppID = Get-AppID -AppName $app.IntuneAppName
+                Write-Host "Updating Packaging Phase Start Time for $($app.IntuneAppName) [$AppID]"
+                Update-PhaseTime -AccessToken $token -Time $timestamp  -Phase_Field "Packaging_Phase_Start_Time" -AppID $AppID
+            }
             # Allow pipeline to continue
             Write-Output -InputObject "Allow pipeline to continue"
         }

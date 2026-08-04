@@ -42,13 +42,13 @@ pipeline {
         VDI_BUILD_LOCATION_CE1 = "CE1"
        
         // // Below are the IAF Build Locations that triggered this pipeline.
-        // IAF_JOBNAME = "${params.IAF_JOBNAME}"
-        // IAF_BUILD = "${params.IAF_BUILD}"
-        // LE_SmokeTestResult = "${params.LE_SmokeTestResult}" // LE smoke test results
+        IAF_JOBNAME = "${params.IAF_JOBNAME}"
+        IAF_BUILD = "${params.IAF_BUILD}"
+        LE_SmokeTestResult = "${params.LE_SmokeTestResult}" // LE smoke test results
 
-        IAF_JOBNAME = "IAF_Intune_App_Factory_E2E"
-        IAF_BUILD = "19"
-        LE_SmokeTestResult = "ST_LE_TESTSUITE_EXECUTION_21_SmokeTestExecutionResult.json" // LE smoke test results
+        // IAF_JOBNAME = "PROD_Intune_App_Factory_E2E"
+        // IAF_BUILD = "45"
+        // LE_SmokeTestResult = "PROD_LE_TESTSUITE_EXECUTION_373_SmokeTestExecutionResult.json" // LE smoke test results
 
         Input_File_name = "LEVMCreationData_${IAF_JOBNAME}_${IAF_BUILD}.json" // LE Vm info file
         
@@ -85,7 +85,7 @@ pipeline {
                         env.LE_CLIENT_ID          = configCE2LE.LE_CLIENT_ID
                         env.QUALYS_USERNAME       = configCE2LE.Qualys_Username
                         env.citrixClientId        = configCE2LE.citrixClientId
-                        env.Citrix_CustomerId     = configCE2LE.LEcitrixcustomerid
+                        env.CitrixCustomerId     = configCE2LE.LEcitrixcustomerid
                         env.Owner                 = configCE2LE.WDAC_Owner
                         env.Repo                  = configCE2LE.WDAC_Repo
                         env.Branch                = configCE2LE.WDAC_Branch
@@ -98,7 +98,7 @@ pipeline {
                 script{
                     dir("PowerShell"){
                         echo "Turn On Vms if in Power Off state..."
-                            psCommand = ''' ./TurnOn-LEVM.ps1 -CitrixCustomerId ${env:Citrix_CustomerId} -citrixClientId ${env:citrixClientId} '''
+                            psCommand = ''' ./TurnOn-LEVM.ps1 -CitrixCustomerId ${env:CitrixCustomerId} -citrixClientId ${env:citrixClientId} '''
                             def turnonvm = runPsWithCreds([[id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
                             echo turnonvm
                             checkPsError(turnonvm, "Crowdstrike On Demand Scan: Failed to turn on VMs")
@@ -150,69 +150,25 @@ pipeline {
                     }
                 }
             }
-        }
-        stage("Remove Stale entries from the Qualys Database") {
-            steps {
-                script {
-                    try{   
-                        def scriptoutput = ""            
-                        dir("PowerShell") {
-                            echo "Running Powershell script Remove-StaleEntries.ps1"
-                                psCommand = ''' ./Remove-StaleEntries.ps1 -TenantId ${env:LE_TENANT_ID} -SubscriptionId ${env:SubscriptionId} -ClientId ${env:LE_CLIENT_ID} -resourceGroupName ${env:ResourceGroupName} -username ${env:QUALYS_USERNAME} '''
-                                def removestaleentries = runPsWithCreds([[id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'PROD_CLIENT_SECRET_LE'],
-                                                                [id: 'QualysKey', type: 'pass', passVar: 'QUALYS_KEY']], psCommand)
-                                echo removestaleentries
-                                checkPsError(removestaleentries, "Remove Stale entries from the Qualys Database")
-                        }
-                    }
-                    catch (Exception ex) {
-                        result.retcode = 1
-                        result.retdescription = "${ex.getMessage()}"
-                        result.retStage = "Remove Stale entries from the Qualys Database"
-                        error("Result: ${result}")
-                    }
-                }
-            }
-        }
-        stage("Validate if the VMs are configured and fetch the Asset IDs") {
-            steps {
-                script {
-                    try{   
-                        def scriptoutput = ""            
-                        dir("PowerShell") {
-                            echo "Running Powershell script FetchAssetID.ps1"
-                                psCommand = ''' ./FetchAssetID.ps1 -username ${env:QUALYS_USERNAME} '''
-                                def fetchassetid = runPsWithCreds([[id: 'QualysKey', type: 'pass', passVar: 'QUALYS_KEY']], psCommand)
-                                echo fetchassetid
-                                checkPsError(fetchassetid, "Validate if the VMs are configured and fetch the Asset IDs")
-                        }
-                    }
-                    catch (Exception ex) {
-                        result.retcode = 1
-                        result.retdescription = "${ex.getMessage()}"
-                        result.retStage = "Validate if the VMs are configured and fetch the Asset IDs"
-                        error("Result: ${result}")
-                    }
-                }
-            }
-        }                
-        stage("Wait for the Default Scan and Trigger OD Scan") {
+        }               
+        stage("Trigger Qualys OD Scan") {
             steps {
                 script {     
                     try{   
                         def scriptoutput = ""            
                         dir("PowerShell") {
-                            echo "Running Powershell script WaitDefaultScan.ps1"
-                                psCommand = ''' ./WaitDefaultScan.ps1 -username ${env:QUALYS_USERNAME} '''
-                                def waitdefaultscan = runPsWithCreds([[id: 'QualysKey', type: 'pass', passVar: 'QUALYS_KEY']], psCommand)
+                            echo "Running Powershell script Trigger-OnDemandScan.ps1"
+                                psCommand = ''' ./Trigger-OnDemandScan.ps1 -username ${env:QUALYS_USERNAME} '''
+                                def waitdefaultscan = runPsWithCreds([[id: 'QualysKey', type: 'pass', passVar: 'QUALYS_KEY'],
+                                                                        [id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
                                 echo waitdefaultscan
-                                checkPsError(waitdefaultscan, "Wait for the Default Scan and Trigger OD Scan")
+                                checkPsError(waitdefaultscan, "Trigger Qualys OD Scan")
                             }
                     }
                     catch (Exception ex) {
                         result.retcode = 1
                         result.retdescription = "${ex.getMessage()}"
-                        result.retStage = "Wait for the Default Scan and Trigger OD Scan"
+                        result.retStage = "Trigger Qualys OD Scan"
                         error("Result: ${result}")
                     }
                 }
@@ -262,112 +218,113 @@ pipeline {
                 }
             }
         }
-        stage('Notify APM TU for failures') {
-            steps {
-                script {
-                    try{
-                        dir("PowerShell"){
-                            echo "Sending Email to Notify APM TU of Scan failure status!"
-                                psCommand = "./Notify-ScanFailuresCatalogueEntry.ps1 | Out-String "
-                                def notifyscanfailures = runPsWithCreds([[id: 'LQKAEZU-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
-                                echo notifyscanfailures
-                                checkPsError(notifyscanfailures, "Notify APM TU of failure status")
-                        }
-                    }
-                    catch(Exception ex) {
-                            result.retcode = 1
-                            result.retdescription = "${ex.getMessage()}"
-                            result.retStage = "Notify APM TU of failure status"
-                            error("Result: ${result}")
-                    }
-                }
-            }
-        }
-        stage("Check For Apps that require IAT/AO Testing") {
-            steps {
-               script {
-                    try{          
-                        dir("PowerShell") {
-                            echo "Running Powershell Check For Apps that require IAT Testing"
-                                psCommand = ''' ./Set-AppIATAO.ps1 -username ${env:APP_CATALOGUE_USERNAME} -tenantId ${env:ARM_TENANT_ID} -clientId ${env:ARM_CLIENT_ID}'''
-                                def iatchek = runPsWithCreds([[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
-                                                              [id: 'PROD-CLIENT-SECRET', type: 'pass', passVar: 'CLIENT_SECRET']], psCommand)
-                                checkPsError(iatchek, "Check For Apps that require IAT/AO Testing")
+        // stage('Notify APM TU for failures') {
+        //     steps {
+        //         script {
+        //             try{
+        //                 dir("PowerShell"){
+        //                     echo "Sending Email to Notify APM TU of Scan failure status!"
+        //                         psCommand = "./Notify-ScanFailuresCatalogueEntry.ps1 | Out-String "
+        //                         def notifyscanfailures = runPsWithCreds([[id: 'iaftu01-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
+        //                         echo notifyscanfailures
+        //                         checkPsError(notifyscanfailures, "Notify APM TU of failure status")
+        //                 }
+        //             }
+        //             catch(Exception ex) {
+        //                     result.retcode = 1
+        //                     result.retdescription = "${ex.getMessage()}"
+        //                     result.retStage = "Notify APM TU of failure status"
+        //                     error("Result: ${result}")
+        //             }
+        //         }
+        //     }
+        // }
+        // stage("Check For Apps that require IAT/AO Testing") {
+        //     steps {
+        //        script {
+        //             try{          
+        //                 dir("PowerShell") {
+        //                     echo "Running Powershell Check For Apps that require IAT Testing"
+        //                         psCommand = ''' ./Set-AppIATAO.ps1 -username ${env:APP_CATALOGUE_USERNAME} -tenantId ${env:ARM_TENANT_ID} -clientId ${env:ARM_CLIENT_ID}'''
+        //                         def iatchek = runPsWithCreds([[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
+        //                                                       [id: 'PROD-CLIENT-SECRET', type: 'pass', passVar: 'CLIENT_SECRET']], psCommand)
+        //                         checkPsError(iatchek, "Check For Apps that require IAT/AO Testing")
 
-                            //Skip IAT VM Creation If no IAt test required                     
-                            if (iatchek.contains('No Apps detected for IAT Testing.')) {
-                                IATVMs = 'no'
-                            }
-                        }
-                    }
-                    catch (Exception ex) {
-                        result.retcode = 1
-                        result.retdescription = "${ex.getMessage()}"
-                        result.retStage = "Check For Apps that require IAT Testing"
-                        error("Result: ${result}")
-                    }
-                }
-            }
-        }
-        stage('Trigger IAT VM Creation Pipeline') {
-            when {
-                expression { return IATVMs == 'yes'}
-            }
-            steps {
-                script {
-                    try{
-                    build job: 'IAT_VM_CREATION',
-                        wait: true,
-                        parameters: [
-                            string(name: 'IAF_JOBNAME', value: env.IAF_JOBNAME),
-                            string(name: 'IAF_BUILD', value: env.IAF_BUILD)
-                        ]
-                    }
-                    catch(Exception ex) {
-                        result.retcode = 1
-                        result.retdescription = "${ex.getMessage()}"
-                        result.retStage = "Trigger IAT VM Creation Pipeline"
-                        error("Result: ${result}")
-                    }
-                }
-            }
-        }
-        stage("Update catalogue workflow phase to testing") {
-            steps {
-               script {
-                    try{        
-                        dir("PowerShell") {
-                            echo "Running Powershell Check to update the catalogue workflow"
-                                psCommand = ''' ./Update-CatalogueWorkflowStatus.ps1 '''
-                                def updatecat = runPsWithCreds([[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
-                                                                [id: 'LQKAEZU-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
-                                echo updatecat
-                                checkPsError(updatecat, "Update the catalogue and Notify the Users")
-                        }
-                    }
-                    catch (Exception ex) {
-                        result.retcode = 1
-                        result.retdescription = "${ex.getMessage()}"
-                        result.retStage = "Update the catalogue and Notify the Users"
-                        error("Result: ${result}")
-                    }
-                }
-            }
-        }
+        //                     //Skip IAT VM Creation If no IAt test required                     
+        //                     if (iatchek.contains('No Apps detected for IAT Testing.')) {
+        //                         IATVMs = 'no'
+        //                     }
+        //                 }
+        //             }
+        //             catch (Exception ex) {
+        //                 result.retcode = 1
+        //                 result.retdescription = "${ex.getMessage()}"
+        //                 result.retStage = "Check For Apps that require IAT Testing"
+        //                 error("Result: ${result}")
+        //             }
+        //         }
+        //     }
+        // }
+        // stage('Trigger IAT VM Creation Pipeline') {
+        //     when {
+        //         expression { return IATVMs == 'yes'}
+        //     }
+        //     steps {
+        //         script {
+        //             try{
+        //             build job: 'IAT_VM_CREATION',
+        //                 wait: true,
+        //                 parameters: [
+        //                     string(name: 'IAF_JOBNAME', value: env.IAF_JOBNAME),
+        //                     string(name: 'IAF_BUILD', value: env.IAF_BUILD)
+        //                 ]
+        //             }
+        //             catch(Exception ex) {
+        //                 result.retcode = 1
+        //                 result.retdescription = "${ex.getMessage()}"
+        //                 result.retStage = "Trigger IAT VM Creation Pipeline"
+        //                 error("Result: ${result}")
+        //             }
+        //         }
+        //     }
+        // }
+        // stage("Update catalogue workflow phase to testing") {
+        //     steps {
+        //        script {
+        //             try{        
+        //                 dir("PowerShell") {
+        //                     echo "Running Powershell Check to update the catalogue workflow"
+        //                         psCommand = ''' ./Update-CatalogueWorkflowStatus.ps1 '''
+        //                         def updatecat = runPsWithCreds([[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
+        //                                                         [id: 'iaftu01-Password', type: 'pass', passVar: 'SMTP_PASSWORD']], psCommand)
+        //                         echo updatecat
+        //                         checkPsError(updatecat, "Update the catalogue and Notify the Users")
+        //                 }
+        //             }
+        //             catch (Exception ex) {
+        //                 result.retcode = 1
+        //                 result.retdescription = "${ex.getMessage()}"
+        //                 result.retStage = "Update the catalogue and Notify the Users"
+        //                 error("Result: ${result}")
+        //             }
+        //         }
+        //     }
+        // }
         stage('LE VM Decommision') {
             steps {
                 script {
                     try {                      
                         dir("PowerShell") {
                             echo "Decom LE VMs after Smoke Test and Scans..."
-                            psCommand = """ ./Decommission-CitrixVMs.ps1 -CitrixCustomerId ${env:Citrix_CustomerId} -citrixClientId ${env:citrixClientId}"""
+                            psCommand = """ ./Decommission-CitrixVMs.ps1 -CitrixCustomerId ${env:CitrixCustomerId} -citrixClientId ${env:citrixClientId}"""
                             def decomLEVM = runPsWithCreds([[id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
                             echo decomLEVM
                             checkPsError(decomLEVM, "decom LE VM")
+                            echo "Skipping Decommisioning stage for testing"
                         }
                        
                         echo "Decom LE VMs completed"
-                       
+                                               
                     } catch(Exception ex) {
                         result.retcode = 1
                         result.retdescription = "${ex.getMessage()}"
@@ -377,27 +334,27 @@ pipeline {
                 }
             }
         }
-        stage('Initiate Continuous test pipeline') {
-            steps {
-                script {
-                    try{                        
-                        build job: 'LE_ContinuousTest_Result_Polling',
-                            wait: false,
-                            parameters: [
-                                string(name: 'LE_SmokeTestResult', value: env.LE_SmokeTestResult),
-                                string(name: 'IAF_JOBNAME', value: env.IAF_JOBNAME),
-                                string(name: 'IAF_BUILD', value: env.IAF_BUILD)
-                            ]
-                    }
-                    catch(Exception ex) {
-                        result.retcode = 1
-                        result.retdescription = "${ex.getMessage()}"
-                        result.retStage = "Initiate Continuous test pipeline"
-                        error("Result: ${result}")
-                    }
-                }
-            }
-        }
+        // stage('Initiate Continuous test pipeline') {
+        //     steps {
+        //         script {
+        //             try{                        
+        //                 build job: 'LE_ContinuousTest_Result_Polling',
+        //                     wait: true,
+        //                     parameters: [
+        //                         string(name: 'LE_SmokeTestResult', value: env.LE_SmokeTestResult),
+        //                         string(name: 'IAF_JOBNAME', value: env.IAF_JOBNAME),
+        //                         string(name: 'IAF_BUILD', value: env.IAF_BUILD)
+        //                     ]
+        //             }
+        //             catch(Exception ex) {
+        //                 result.retcode = 1
+        //                 result.retdescription = "${ex.getMessage()}"
+        //                 result.retStage = "Initiate Continuous test pipeline"
+        //                 error("Result: ${result}")
+        //             }
+        //         }
+        //     }
+        // }
     }
     post {
         always {

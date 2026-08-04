@@ -24,18 +24,18 @@ Process {
     # Cleanup Previous Builds Folders to free up disk space
     $CurrentBuildId = $env:BUILD_ID
     $WorkspaceFolder = Split-Path -Path $env:PIPELINE_WORKSPACE -Parent
-    $BuildFoldersList = Get-ChildItem -Path $WorkspaceFolder -Directory
-    
-    #Retain last Eight Builds set the upper and lower range
-    $upper = [int]$CurrentBuildId
-    $lower = $upper - 8
+    $CutoffDate = (Get-Date).AddDays(-7)
 
-    foreach ($build in $BuildFoldersList){
-        $PrevBuildPath = Join-Path -Path $WorkspaceFolder -ChildPath $build
-        if ([int]$build.Name -notin ($lower..$upper)){            
-            Remove-Item -Path $PrevBuildPath -Recurse -Force
-            Write-Host "Removing older Build: $PrevBuildPath"
-        } 
+    $BuildFoldersList = Get-ChildItem -Path $WorkspaceFolder -Directory
+    foreach ($build in $BuildFoldersList) {
+        # Skip current build folder
+        if ($build.Name -eq $CurrentBuildId.ToString()) {
+            continue
+        }
+        if ($build.LastWriteTime -lt $CutoffDate) {
+            Write-Host "Removing build older than 2 days: $($build.FullName)"
+            Remove-Item -Path $build.FullName -Recurse -Force
+        }
     }
     # Intitialize variables
     $AppsListFileNames = @("AppsProcessList.json", "AppsDownloadList.json", "AppsPrepareList.json", "AppsPublishList.json", "AppsAssignList.json")

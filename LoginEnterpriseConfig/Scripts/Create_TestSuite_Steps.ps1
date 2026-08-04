@@ -191,7 +191,7 @@ try {
         $username = $env:APP_CATALOGUE_USERNAME 
         $password = $env:APP_CATALOGUE_SECRET
         $catlogueToken = Get-CatalogueAccessToken -username $username -password $password
-        AppCatalogueUpdate -AccessToken $catlogueToken -IntuneAppName $IntuneAppName -AppID $AppId -Reason $Reason -Comment $Comment = $errorMessage
+        AppCatalogueUpdate -AccessToken $catlogueToken -IntuneAppName $IntuneAppName -AppID $AppId -Reason $Reason -Comment $errorMessage
         Write-Output "PS_ERROR_DESC= Error in while Creating Accout-Group in Create_TestSuite_Steps.ps1 script: $_"
         exit 1
       }
@@ -226,7 +226,7 @@ try {
       $username = $env:APP_CATALOGUE_USERNAME 
       $password = $env:APP_CATALOGUE_SECRET
       $catlogueToken = Get-CatalogueAccessToken -username $username -password $password
-      AppCatalogueUpdate -AccessToken $catlogueToken -IntuneAppName $IntuneAppName -AppID $AppId -Reason $Reason -Comment $Comment = $errorMessage
+      AppCatalogueUpdate -AccessToken $catlogueToken -IntuneAppName $IntuneAppName -AppID $AppId -Reason $Reason -Comment $errorMessage
 
       Write-Output "PS_ERROR_DESC= Error in while Creating Accout-Group in Create_TestSuite_Steps.ps1 script: $_"
       exit 1 
@@ -298,10 +298,17 @@ $commandLine = @'
       $ListOfLauncherGroups = $LauncherGroups_API_Response | ConvertFrom-Json
 
       $launcherGroup = $ListOfLauncherGroups.items | Where-Object { $_.name -eq $env:LE_Launcher }
+      
+      $TestSuiteName = "T_51_ST_Suite_" + $app.IntuneAppName + "_$currentDateTime"
+    
+        # Ensure name doesn't exceed 64 characters
+        if ($TestSuiteName.Length -gt 64) {
+            $TestSuiteName = $TestSuiteName.Substring(0, 64)
+        }
 
       $TestSuite_RequestBody.type = "ApplicationTest"
       $currentDateTime = Get-Date -Format "yyyyMMdd_HHmmss_fff"
-      $TestSuite_RequestBody.name = "T_51_ST_Suite_" + $app.IntuneAppName + "_$currentDateTime"
+      $TestSuite_RequestBody.name = $TestSuiteName
 
       $TestSuite_RequestBody.description = "Transformation Project (T5.1) Smoke Test(ST) Test Suite for " + $app.IntuneAppName +" AppId $AppId"  
 
@@ -417,7 +424,7 @@ $commandLine = @'
       $username = $env:APP_CATALOGUE_USERNAME 
       $password = $env:APP_CATALOGUE_SECRET
       $catlogueToken = Get-CatalogueAccessToken -username $username -password $password
-      AppCatalogueUpdate -AccessToken $catlogueToken -IntuneAppName $IntuneAppName -AppID $AppId -Reason $Reason -Comment $Comment = $errorMessage
+      AppCatalogueUpdate -AccessToken $catlogueToken -IntuneAppName $IntuneAppName -AppID $AppId -Reason $Reason -Comment $errorMessage
       Write-Output "PS_ERROR_DESC= Error in while Creating TestSuite with Steps in Create_TestSuite_Steps.ps1 script: $_"
       exit 1 
     }

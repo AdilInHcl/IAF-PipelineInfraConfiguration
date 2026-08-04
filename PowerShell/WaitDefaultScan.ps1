@@ -16,6 +16,9 @@ param(
     [string]$password = $env:QUALYS_KEY
 )
 
+#Import Module Restart-LEVM.ps1
+Import-Module "$($env:WORKSPACE)/PowerShell/Restart-LEVM.psm1"
+
 # IT RETURNS THE Last Scan Timestamp
 function Get-LastScanTimestamp{
     param (
@@ -225,6 +228,13 @@ try{
         if(@($UnderScanningDevices).count -gt 0){
             Write-Host "Qualys Default Scan is not completed for below VMs. Waiting $delayMinutes minutes before retrying... (Attempt $($retryCount+1))"
             Write-Host $UnderScanningDevices.DeviceName
+
+            # #Re-Start the VMs if the Deafualt Scan is not completed in 45 mins
+            # if($retryCount -eq 0){
+            #     Connect-Citrix
+            #     Restart-CitrixVm -Machines $UnderScanningDevices.DeviceName
+            # }
+
             Start-Sleep -Seconds ($delayMinutes * 60)
         }
         else{

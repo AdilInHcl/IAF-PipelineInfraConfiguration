@@ -69,9 +69,7 @@ pipeline {
     QualysScanResult="${env.ScanFolder}Qualys\\${env.ScanPipelineBuildTag}\\" //required in notification
     CrowdstrikeScanResult="${env.ScanFolder}Crowdstrike\\${env.ScanPipelineBuildTag}\\" //required in notification
     ContinuousTestResultPath="${env.ScanFolder}ContinuousTest\\${env.ScanPipelineBuildTag}\\" //required in notification
-    LEConfigJsonPath = "${HOMEDRIVE}\\LESmokeTestData\\"
-    Password = credentials("TMU-EU-AVC023")  // Updated: Match script variable name
-    GIT_PAT = credentials("PROD-NOREPLY-PAT") // Github PAT/Key
+    LEConfigJsonPath = "${HOMEDRIVE}\\LESmokeTestData\\" 
     LE_Test_Re_Run_MaxLimit = 8
 }
 
@@ -83,6 +81,8 @@ pipeline {
                         def configFile = "${VDI_BUILD_LOCATION_CE2}-STD.json"
                         def config = readJSON file: configFile
 
+                        def configFile_CE1 = "${BUILD_LOCATION_CE1}-STD.json"
+                        def config_CE1 = readJSON file: configFile_CE1
                         // Validate and assign to env to make them available globally
                         def required = [
                             'LE_ContiTest_Owner', 'LE_ContiTest_Repo', 'LE_ContiTest_Branch',
@@ -100,7 +100,11 @@ pipeline {
                         env.LE_ContiTest_Repo        = config.LE_ContiTest_Repo
                         env.LE_ContiTest_Branch      = config.LE_ContiTest_Branch
                         env.LE_ContiTest_AppListJson = config.LE_ContiTest_AppListJson
-                        env.LE_API_Base_Url          =   config.LE_API_Base_Url
+                        env.LE_API_Base_Url          = config.LE_API_Base_Url
+                        env.APP_CATALOGUE_USERNAME   = config_CE1.APP_CATALOGUE_USERNAME
+                        env.APP_CATALOGUE_BASE_URL   = config_CE1.APP_CATALOGUE_BASE_URL
+                        env.SMTP_From = config.SMTP_From
+                        env.SMTP_UserName = config.SMTP_UserName
                     }
                 }
                 script {
@@ -229,21 +233,23 @@ pipeline {
                     echo "Family ID: ${env.familyID}"
                     echo "Continuous Test Name: ${env.continuousTestName}"
 
-                     echo "Running AddContinuousTestName.ps1 script..."
-                    // Run the PowerShell script and capture its output
-                    //-intuneAppName ${intuneAppName} -familyID ${familyID} -continuousTestName ${continuousTestName}
-                    def scriptOutput = bat(
-                        returnStdout: true,
-                        script: """
-                            powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Unrestricted -Command "& { . '${env.BUILD_SOURCESDIRECTORY}\\LoginEnterpriseConfig\\Scripts\\AddContinuousTestName.ps1' }| Out-String"
-                        """
-                    ).trim()
-
-                    echo "Output from AddContinuousTestName.ps1:"
-                    echo scriptOutput
-                    checkPsError(scriptOutput, "Onboard App in Continuous Test")
-
+                     echo "Running AddContinuousTestName.ps1 script..." 
+                    dir("LoginEnterpriseConfig") {
+                            // powershell ''' 
+                            psCommand = ''' ./Scripts/AddContinuousTestName.ps1 ''' 
+                            //def sendEmailOutput =powershell(returnStdout: true, script: psCommand).trim()
+                            def scriptOutput = runPsWithCreds(
+                                [[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
+                                [id: 'iaftu01-Password', type: 'pass', passVar: 'Password'],
+                                [id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT']], 
+                                psCommand
+                            )
+                            echo "Output from AddContinuousTestName.ps1:"
+                            echo scriptOutput
+                            checkPsError(scriptOutput, "Onboard App in Continuous Test")
+                         }                   
                     }
+                    
                      catch(Exception ex) {
                         result.retcode = 1
                         result.retdescription = "${ex.getMessage()}"
@@ -263,38 +269,48 @@ pipeline {
             steps {
                 script {
                     try {
+                        def maxRuns = env.LE_Test_Re_Run_MaxLimit.toInteger()
+                        def currentRun = 1
+                        def continueLoop = true
+    
+                        while (currentRun <= maxRuns && continueLoop) {
 
-                    def maxRuns = env.LE_Test_Re_Run_MaxLimit.toInteger()
-                    def currentRun = 1
-                    def continueLoop = true
- 
-                    while (currentRun <= maxRuns && continueLoop) {
+                            dir("LoginEnterpriseConfig") {
+                                echo "Running ContinuousTestResult.ps1 script..."
+                                // Run the PowerShell script and capture its output
+                                psCommand = """ ./Scripts/ContinuousTestResult.ps1 -LE_Test_Re_Run_MaxLimit ${maxRuns} -LE_Test__CurrentRun ${currentRun} """
+                                def triggerOutput = runPsWithCreds([[id: 'PROD-LE-Config-Token', type: 'pass', passVar: 'LE_Config_Token'],
+                                                                        [id: 'PROD-LE-Read-Token', type: 'pass', passVar: 'LE_Read_Token'],
+                                                                        [id: 'iaftu01-Password', type: 'pass', passVar: 'Password'],
+                                                                        [id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT']], psCommand)
+                                
+                                checkPsError(triggerOutput, "Poll Continuous Test Results")
+                                echo "Output from ContinuousTestResult.ps1:"
+                                echo triggerOutput
 
-                        dir("LoginEnterpriseConfig") {
-                            echo "Running ContinuousTestResult.ps1 script..."
-                            // Run the PowerShell script and capture its output
-                            psCommand = """ ./Scripts/ContinuousTestResult.ps1 -LE_Test_Re_Run_MaxLimit ${maxRuns} -LE_Test__CurrentRun ${currentRun} """
-                            def triggerOutput = runPsWithCreds([[id: 'PROD-LE-Config-Token', type: 'pass', passVar: 'LE_Config_Token'],
-                                                                    [id: 'PROD-LE-Read-Token', type: 'pass', passVar: 'LE_Read_Token']], psCommand)
-                            
-                            checkPsError(triggerOutput, "Poll Continuous Test Results")
-                            echo "Output from ContinuousTestResult.ps1:"
-                            echo triggerOutput
-                           }
-                            
-                            currentRun++
-                            // Sleep for 30 minutes (30 minutes * 60 seconds * 1000 milliseconds)
-                            sleep(time: 30, unit: 'MINUTES')
-                            // Main script execution
-                            // performTaskWithCountdown()
-                            echo "Delay complete. Triggering ContinuousTestResult again."
-                    }
-                    }
+                                //Incase No App is marked for continous Test
+                                if (triggerOutput.contains("Skip_Continous_Test")) {
+                                    continueLoop = false
+                                }
+                                //Incase All Apps Have passed Continuous test
+                                if (triggerOutput.contains("All_Continous_Test_Pass")) {
+                                    continueLoop = false
+                                }
+                                
+                            }
+                                currentRun++
+                                //WAIT TIME
+                            if(continueLoop && currentRun <= maxRuns){
+                                sleep(time: 30, unit: 'MINUTES')
+                                echo "Delay complete. Triggering ContinuousTestResult again."
+                            }
+                        }
+                    }   
                     catch(Exception ex) {
-                            result.retcode = 1
-                            result.retdescription = "${ex.getMessage()}"
-                            result.retStage = "checked the existing App in LE and New Apps List in AppJson file"
-                            error("Result: ${result}")                                         
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "checked the existing App in LE and New Apps List in AppJson file"
+                        error("Result: ${result}")                                         
                     }
 
                     
@@ -313,12 +329,15 @@ pipeline {
                     try {              
                         echo "Running Powershell script to send email notification"
                          dir("PowerShell") {
-                            // powershell '''
-                            // ./Send-FinalEmail-Notification.ps1 
-                            // '''
-                            psCommand = ''' ./Send-FinalEmail-Notificationtest.ps1 '''
-                            // def pollResultOutput = runPsWithCreds([], psCommand)
-                            def sendEmailOutput =powershell(returnStdout: true, script: psCommand).trim()
+                            // powershell ''' 
+                            psCommand = ''' ./Send-FinalEmail-Notification.ps1 ''' 
+                            //def sendEmailOutput =powershell(returnStdout: true, script: psCommand).trim()
+                            def sendEmailOutput = runPsWithCreds(
+                                [[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
+                                [id: 'iaftu01-Password', type: 'pass', passVar: 'Password'],
+                                [id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT']], 
+                                psCommand
+                            )
                             echo sendEmailOutput
                             checkPsError(sendEmailOutput, "Send Combined Email notification")
                          }

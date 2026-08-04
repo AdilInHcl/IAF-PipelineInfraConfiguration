@@ -25,16 +25,15 @@ param(
     [string]$citrixPassword = $env:citrixPassword,
     [string]$CatalogName = $env:LEClient_CatalogName
 )
+Import-Module "$($env:WORKSPACE)/Scripts/CitrixConnect.psm1"
 
 # Load Citrix PowerShell modules
 asnp citrix.*
+###############################
+# Connect to Citrix Cloud
+###############################
 
-# Authenticate to Citrix Cloud using CloudAPI credentials
-Set-XDCredentials -CustomerId $CitrixCustomerId -APIKey $citrixClientId -SecretKey $citrixPassword -ProfileType CloudApi -StoreAs "CitrixEUPackagingConnection"
-
-# Initiate authentication session using saved profile
-Get-XDAuthentication -ProfileName "CitrixEUPackagingConnection"
-Write-Host "Successfully logged in to the Citrix Cloud."
+Connect-Citrix 
 
 # Ensure the Input file exists
 $VMInfoFileName = $env:Input_File_name

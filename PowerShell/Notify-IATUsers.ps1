@@ -30,7 +30,7 @@ function Send-ScriptNotificationEmail {
     )
     #Set Variables
     $smtpServer = "tmu-cs.mail.allianz"
-    $smtpFrom = "noreply-wps-app@allianz.com"
+    $smtpFrom = "APP-CONVERSION@allianz.com"
     $messageSubject = $Subject
  
     $UserName = $TMUusername
@@ -51,8 +51,15 @@ try{
     $Job_name = $env:JOB_NAME
     $build = $env:BUILD_NUMBER
 
+    # Load JSON from Recipient file
+    $EmailjsonPath = Join-Path -Path (Join-Path -Path $env:BUILD_SOURCESDIRECTORY -ChildPath "configs") -ChildPath "EmailRecipients.json"
+    $data = Get-Content $EmailjsonPath | ConvertFrom-Json
+
+    # Extract and split 'Cc' emails into array for Sharepoint Catalogue
+    $FailureEmailTo = $data.IATVMFail.To
+
     #Set the HTML tags and Table Css
-    $htmlbody = '<!DOCTYPE html>
+    $htmlbodypass = '<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -122,17 +129,91 @@ try{
 </body>
 </html>
 '
-    $Subject = " $Job_name Build: $build - Success "
+    $failemailtemplate = '
+    <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>IAT Virtual Machine Provisioning Failed</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            background-color: #f7f7f7;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            background: #ffffff;
+            padding: 25px;
+            border-radius: 8px;
+            max-width: 650px;
+            margin: auto;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        h2 {
+            color: #cc0000;
+            margin-top: 0;
+        }
+        .highlight {
+            background: #fff1f1;
+            padding: 12px;
+            border-left: 4px solid #cc0000;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .footer {
+            margin-top: 30px;
+            font-size: 14px;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>IAT Virtual Machine Provisioning Failed</h2>
+
+    <p>Hello Team,</p>
+
+    <p>We regret to inform you that the provisioning of your <strong>IAT virtual machine</strong> could not be completed successfully.</p>
+
+    <div class="highlight">
+        <p><strong>Status:</strong> VM Provisioning Failed</p>
+        <p>The virtual machine could not be created due to a provisioning issue encountered during the deployment process.</p>
+        <p><strong>User:</strong>{{UserEmail}}</p>
+        <p><strong>VM:</strong>{{MachineName}}</p>
+    </div>
+
+    <p>
+        We apologize for the inconvenience and appreciate your patience while the issue is being resolved.
+    </p>
+
+    <p class="footer">
+        Best regards,<br>
+        <strong>HCL Automation Team</strong>
+    </p>
+</div>
+
+</body>
+</html>
+'
+    $Subjectpass = " $Job_name Build: $build - Success "
+    $SubjectFail = " $Job_name Build: $build - Failed "
 
     foreach($user in $IATVMCreationData){
-        
-        $ToEmail = $user.User
+        $AssignationStatus = $user.Status
     
-        if ($ToEmail){
+        if ($AssignationStatus -eq "Assigned"){
             #Send Email for the application catalogue entry
-            Send-ScriptNotificationEmail -Subject $Subject -Recipient $ToEmail -Body $htmlbody -TMUusername $TMUusername -TMUpassword $TMUpassword
+            $ToEmail = $user.User
+            Send-ScriptNotificationEmail -Subject $Subjectpass -Recipient $ToEmail -Body $htmlbodypass -TMUusername $TMUusername -TMUpassword $TMUpassword
         }
         else{
+            $htmlbodyfail = $failemailtemplate
+            $htmlbodyupdatedfail = $htmlbodyfail.Replace('{{UserEmail}}', $user.User)
+            $htmlbodyupdatedfail = $htmlbodyupdatedfail.Replace('{{MachineName}}', $user.Device)
+
+            Send-ScriptNotificationEmail -Subject $SubjectFail -Recipient $FailureEmailTo -Body $htmlbodyupdatedfail -TMUusername $TMUusername -TMUpassword $TMUpassword
             Write-Host "Device not mapped to $($user.User)"
         }
     }

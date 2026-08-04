@@ -1,179 +1,91 @@
-function Normalize-Name {
-    param([string]$name)
-    if (-not $name) { return "" }
+<#
+.SYNOPSIS
+    Updates the Intune App Notes with the AppID and Version
 
-    # Convert ++ to plusplus
-    $name = $name -replace '\+\+', 'plusplus'
+.DESCRIPTION
+    This Script will update the APPID and Version in the notes section of the App.json
 
-    # Remove all non-alphanumeric characters
-    $name = $name -replace '[^a-zA-Z0-9]', ''
+.NOTES
+    FileName: Update-IntuneAppNotes.ps1
+    Author: Daniyal Ahmad
+    Version: 1.0
+#>
+#Update the APPID in Invoke-AppDeployToolKit.ps1
+function Update-DeployKitInvokeAppID{
+    param(
+        $AppID,
+        $AppFolder
+    )
+    $AppID
+    $AppFolder
 
-    return $name.ToLower()
-}
+    $fileName = "Invoke-AppDeployToolkit.ps1"
+    $AppDeployKitBaseFolder = Join-Path -Path $appsRootPath -ChildPath $AppFolder
+    $AppDeployKitFile = Join-Path -Path $AppDeployKitBaseFolder -ChildPath $fileName
 
-function Update-AppIdInNotes {
-    param([Parameter(Mandatory)] $AppJson, [string]$AppId)
-    if ([string]::IsNullOrWhiteSpace($AppId)) { return $AppJson }
-    if ($null -eq $AppJson.Information -or -not ($AppJson.Information.Notes -is [System.Collections.IEnumerable])) { return $AppJson }
-
-    $notes = @(); $found = $false
-    foreach ($n in $AppJson.Information.Notes) {
-        if ($n -match '^\s*AppID\s*:') {
-            $notes += "AppID: $AppId"
-            $found = $true
-        } else {
-            $notes += $n
-        }
+    try{
+        (Get-Content -Path $AppDeployKitFile) -replace '###APPID###', $AppID | Set-Content $AppDeployKitFile -Force
+        return $true
     }
-    if (-not $found) { $notes += "AppID: $AppId" }
-
-    $AppJson.Information.Notes = $notes
-    return $AppJson
-}
-
-function Update-AppVersionInNotes {
-    param([Parameter(Mandatory)] $AppJson, [string]$AppId, [Parameter(Mandatory)][string]$AppName, [Parameter(Mandatory)] $AppVersions)
-
-    if ($null -eq $AppJson.Information -or -not ($AppJson.Information.Notes -is [System.Collections.IEnumerable])) { return $AppJson }
-
-    $notes = @()
-    foreach ($n in $AppJson.Information.Notes) {
-        if ($n -match '^\s*Package Name\s*:') {
-
-            $val = $n -replace '^\s*Package Name\s*:\s*',''
-            $ver = if ($AppVersions -and $AppVersions.ContainsKey($AppName)) { 
-                $AppVersions[$AppName] 
-            } else { 
-                $AppJson.Information.AppVersion 
-            }
-
-            if ($ver) {
-                if ($val -match '<Version>') {
-                    $val = $val -replace '<Version>', $ver
-                }
-                elseif ($AppJson.Information.AppVersion -and $val -match [regex]::Escape($AppJson.Information.AppVersion)) {
-                    $val = $val -replace [regex]::Escape($AppJson.Information.AppVersion), $ver
-                }
-            }
-
-            if ($AppId) { $val = $val -replace '<AppID>', $AppId }
-
-            $notes += "Package Name: $val"
-        }
-        else {
-            $notes += $n
-        }
+    catch{
+        return $false
     }
-
-    $AppJson.Information.Notes = $notes
-    return $AppJson
+    
 }
 
-function Update-AppJsonNotes {
-    try {
-        $appsList = Join-Path (Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY "AppsDownloadList") "AppsDownloadList.json"
-        $appIdFile = Join-Path $env:BUILD_BINARIESDIRECTORY "AppId.json"
-        $appsRoot  = Join-Path $env:BUILD_SOURCESDIRECTORY "Apps"
 
-        if (-not (Test-Path $appsList) -or -not (Test-Path $appsRoot)) { 
-            Write-Host "PS_ERROR_DESC=Missing AppsDownloadList or Apps root"; 
-            exit 1 
+$appsdownloadedList = Join-Path -Path $env:BUILD_BINARIESDIRECTORY -Childpath "AppsPrepareList.json"
+$appIdFile = Join-Path -Path $env:BUILD_BINARIESDIRECTORY -Childpath "AppId.json"
+$appsRootPath  = Join-Path -Path $env:BUILD_SOURCESDIRECTORY -ChildPath "Apps"
+$applistjson = Join-Path -Path $env:BUILD_SOURCESDIRECTORY -ChildPath "appList.json"
+
+try {
+    $appdownloadedcontent = Get-Content -Path $appsdownloadedList | ConvertFrom-Json
+    $appidjsoncontent = (Get-Content -Path $appIdFile | ConvertFrom-Json).Apps
+    $applistjsoncontent = (Get-Content -Path $applistjson | ConvertFrom-Json).Apps
+    
+    Write-Host "Updating the notes section in App.Json for each app"
+    foreach($app in $appdownloadedcontent){
+
+        # Create the App.Josn Path for each App
+        Write-Host "[$($app.IntuneAppName)]"
+        $AppJsonPath = Join-Path -Path (Join-Path $appsRootPath -ChildPath $app.AppFolderName) -ChildPath "App.Json"
+        $AppID = ($appidjsoncontent | Where-Object {$_.IntuneAppName -eq $app.IntuneAppName}).AppId 
+
+        $AppJsoncontent = Get-Content -Path $AppJsonPath | ConvertFrom-Json
+        $AppNotes= $AppJsoncontent.Information.Notes
+
+        # Update Intune App Notes for AppID
+        $AppNotes = $AppNotes -replace "(?i)<AppID>", $AppID
+
+        # Update Intune App Notes for Version
+        $AppNotes = $AppNotes -replace "(?i)<Version>", $app.AppSetupVersion
+
+        # Add a TestFlag incase of test onboarding:
+        if($env:PIPELINE_TYPE -eq "TEST"){
+            $AppNotes += "`r`nTestApp: Yes"
         }
 
-        $list = Get-Content -Raw -Path $appsList | ConvertFrom-Json
+        #Update the App.Json with notes containing AppID
+        $AppJsoncontent.Information.Notes = $AppNotes
+        $AppJsoncontent = $AppJsoncontent | ConvertTo-Json -Depth 10
+        Out-File -InputObject $AppJsoncontent -FilePath $AppJsonPath
+        Write-Host "UPDATED NOTES - AppID: $AppID and Version: $($app.AppSetupVersion)"
 
-        $appIdData = if (Test-Path $appIdFile) {
-            try {
-                $data = Get-Content -Raw $appIdFile | ConvertFrom-Json
-                Write-Host "DEBUG: Loaded AppId.json from $appIdFile"
-                $data
-            } catch {
-                Write-Host "DEBUG: Failed to parse AppId.json: $_"
-                $null
-            }
-        } else {
-            Write-Host "DEBUG: AppId.json not found at $appIdFile"
-            $null
+        #Update the Invoke
+        $AppFolder = ($applistjsoncontent | Where-Object {$_.IntuneAppName -eq $app.IntuneAppName}).AppFoldername
+        $DeployKitUpdatestatus = Update-DeployKitInvokeAppID -AppID $AppID -AppFolder $AppFolder
+
+        if ($DeployKitUpdatestatus){
+            Write-Host "UPDATED DEPLOYMENT KIT - AppID: $AppID"
+        }
+        else{
+            Write-Host "Failed to update the Deployment Kit."
         }
 
-        $versions = @{}
-        foreach ($e in $list) {
-            if ($e.IntuneAppName -and $e.AppSetupVersion) {
-                $versions[$e.IntuneAppName] = $e.AppSetupVersion
-            }
-        }
-
-        $failed = $false; $updated = 0; $skipped = 0
-
-        foreach ($entry in $list) {
-
-            $name = $entry.IntuneAppName
-            $normalizedTarget = Normalize-Name $name
-
-            # FIXED FOLDER MATCHING LOGIC
-            $folder = Get-ChildItem -Path $appsRoot -Directory -ErrorAction SilentlyContinue |
-                      Where-Object { (Normalize-Name $_.Name) -eq $normalizedTarget } |
-                      Select-Object -First 1
-
-            if (-not $folder) { 
-                $skipped++; 
-                continue 
-            }
-
-            $appJsonPath = Join-Path $folder.FullName "App.json"
-            if (-not (Test-Path $appJsonPath)) { 
-                $skipped++; 
-                continue 
-            }
-
-            try { 
-                $appJson = Get-Content -Raw -Path $appJsonPath | ConvertFrom-Json 
-            } catch { 
-                Write-Host "PS_ERROR_DESC=Parse failed for $name"; 
-                $failed = $true; 
-                $skipped++; 
-                continue 
-            }
-
-            $appId = $null
-            if ($appIdData -and $appIdData.Apps) {
-                $m = @($appIdData.Apps) | Where-Object { $_.IntuneAppName -ieq $name } | Select-Object -First 1
-                if ($m) {
-                    $appId = $m.AppId
-                    Write-Host "DEBUG: Found AppID '$appId' for '$name'"
-                } else {
-                    Write-Host "DEBUG: No AppID match for '$name' in AppId.json"
-                }
-            }
-
-            # Update Notes
-            $appJson = Update-AppIdInNotes      -AppJson $appJson -AppId $appId
-            $appJson = Update-AppVersionInNotes -AppJson $appJson -AppId $appId -AppName $name -AppVersions $versions
-
-            try {
-                $out = $appJson | ConvertTo-Json -Depth 10
-                [System.IO.File]::WriteAllText($appJsonPath, $out, [System.Text.UTF8Encoding]::new($false))
-                $updated++
-            } catch { 
-                Write-Host "PS_ERROR_DESC=Save failed for $name"; 
-                $failed = $true; 
-                $skipped++; 
-                continue 
-            }
-        }
-
-        if ($failed) { 
-            Write-Host "PS_ERROR_DESC=One or more updates failed. Updated=$updated; Skipped=$skipped"; 
-            exit 1 
-        }
-
-        Write-Host "SUCCESS: Updated=$updated; Skipped=$skipped"; 
-        exit 0
-
-    } catch { 
-        Write-Host "PS_ERROR_DESC=Unhandled error: $($_.Exception.Message)"; 
-        exit 1 
-    }
+    }    
 }
-
-Update-AppJsonNotes
+catch{
+    Write-Output "PS_ERROR_DESC= [$($app.IntuneAppName)] - $_"
+    
+}

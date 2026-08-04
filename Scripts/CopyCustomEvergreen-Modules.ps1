@@ -144,10 +144,10 @@ param(
                                 Remove-Item -Path $filePath -Recurse -Force
                             }
 
-                            if (-not (Test-Path $filePath)){
+                            # if (-not (Test-Path $filePath)){
 
-                                Write-Host "File Not Found :$filePath"
-                                Write-Host "Copying Files to :$filePathRoot from GitHub"
+                            #     Write-Host "File Not Found :$filePath"
+                                #Write-Host "Copying Files to :$filePathRoot from GitHub"
 
                                 # Send a request to get the file content
 			                    $response = Invoke-WebRequest -Uri $ApiUrlFile -Headers $Headers -Method Get -ErrorAction Stop -UseBasicParsing
@@ -161,16 +161,17 @@ param(
 
                                     # Save the content to the file, replacing it if it exists
 			                        Set-Content -Path $filePath -Value $fileContent
-                                    Write-Host "Files Successfully Moved to the location $filePathRoot"
+                                    #Write-Host "Files Successfully Moved to the location $filePathRoot"
 
                                     
                                 }else{
                                     Write-Host "Unable to fetch Contents of $fileName from GitHub"
                                 }
 
-                            }else {
-                            Write-Host "File Already Exists: $folder/$filename"
-                           }
+                            # }
+                            # else {
+                            #     Write-Host "File Already Exists: $folder/$filename"
+                            # }
 
                         }
                     } else {

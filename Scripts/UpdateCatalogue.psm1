@@ -9,6 +9,39 @@
     FileName: UpdateCatalogue.psm1
     Author : Daniyal Ahmad
 #>
+#Fetch AppID from AppID.json
+function Get-AppID{
+        param(
+        [string] $AppName
+        )
+
+        #Fetch the App IDs from the AppId.json in the binaries directory
+        $AppIDJSONPath = Join-Path -Path $env:BUILD_BINARIESDIRECTORY -ChildPath "AppId.json"
+
+        # Check if the JSON file exists
+        if (Test-Path $AppIDJSONPath) {
+            # Load JSON data
+            $InputJson = Get-Content -Raw -Path $AppIDJSONPath | ConvertFrom-Json
+
+            # Normalize: always wrap into .Apps
+            if ($null -eq $InputJson.Apps) {
+                # Legacy single app JSON → wrap it
+                $AppInfoObject = [PSCustomObject]@{
+                    Apps = @($InputJson)
+                }
+            }
+            else {
+                # Already has Apps → just keep as is
+                $AppInfoObject = $InputJson
+            }
+        }
+        else {
+            Write-Host "PS_ERROR_DESC= JSON file at path '$jsonFilePath' does not exist."
+            exit 1
+        }
+        $AppId = $AppInfoObject.Apps | Where-Object {$_.IntuneAppName -eq $AppName}| Select-Object AppId
+        return $AppId.AppId
+}
 
 #Get Catalogue Access Token
 function Get-CatalogueAccessToken{
@@ -21,16 +54,31 @@ function Get-CatalogueAccessToken{
         password = $password
     } | ConvertTo-Json
 
-    $response = Invoke-RestMethod -Method Post `
-        -Uri "$($env:APP_CATALOGUE_BASE_URL)/auth/login" `
-        -Headers @{
-            "accept" = "application/json"
-            "Content-Type" = "application/json"
-        } `
-        -Body $body
+    $maxRetries = 3
 
-    $access_token = $response.access_token
-    return $access_token
+    for($i = 1; $i -le $maxRetries; $i++){
+        try{
+            $response = Invoke-RestMethod -Method Post `
+                -Uri "$($env:APP_CATALOGUE_BASE_URL)/auth/login" `
+                -Headers @{
+                    "accept" = "application/json"
+                    "Content-Type" = "application/json"
+                } `
+                -Body $body
+
+            $access_token = $response.access_token
+            return $access_token
+        }
+        catch{
+            Write-Warning "Get-CatalogueAccessToken failed. Attempt $i of $maxRetries. Error: $_"
+
+            if($i -eq $maxRetries){
+                throw
+            }
+
+            Start-Sleep -Seconds 10
+        }
+    }
 }
 
 #Update the Catalogue with status for each App
@@ -112,7 +160,7 @@ function Update-CatlogueStatus {
     # Create PayloadJson
     ########################################################
     Write-Host "[$REASON]"
-    Write-Host "Updating Catalogue for Missing Apps: $($missingApps.IntuneAppName -join ", ")" 
+    Write-Host "Updating Catalogue for Apps: $($missingApps.IntuneAppName -join ", ")" 
 
     foreach ($App in $missingApps) {
 
@@ -163,5 +211,123 @@ function Update-CatlogueStatus {
             $uniqueAppIds = $updatelist.AppID | Select-Object -Unique
             Write-Host "Updated Catalogue for AppIDs [$uniqueAppIds]"
         }
+    }
+}
+
+#Update the Catalogue with status for each App
+function Update-FinalPackageLocation {
+    param(
+        [Parameter(Mandatory = $true)]
+        $AccessToken,
+        [Parameter(Mandatory = $true)]
+        $AppID,
+        [Parameter(Mandatory = $true)]
+        $URL
+    )
+
+    ###########################################################
+    # Headers and URO for updating the Apps status in catlogue
+    ###########################################################
+    $headers = @{
+        "accept"        = "application/json"
+        "Authorization" = "Bearer $AccessToken"
+        "Content-Type" = "application/json"
+    }
+    #URL to create a new App ID.
+    $uri = "$($env:APP_CATALOGUE_BASE_URL)/applications/bulk-update"
+
+    Write-Host "Updating Catalogue for Final package location: $URL" 
+    
+    # Build the updates object
+    $updates = @{
+        Final_package_location = $URL
+    }
+
+    # Build the inner object
+    $dataload = [PSCustomObject]@{
+        AppID   = $AppID.ToString()
+        updates = $updates
+    }
+
+    # Wrap in array
+    $data = @($dataload)
+
+    # Wrap in final payload object
+    $payload = @{
+        data = $data
+    }
+
+    # Convert to JSON
+    $payloadJson = $payload | ConvertTo-Json -Depth 10
+
+    $status = Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -Body $payloadJson 
+    #Check if the App ID has been added to the Catalogue
+    if($status.failed_count -gt 0 ){
+        Write-Host "Catalogue Update [Failed]"
+        $uniqueAppIds = $updatelist.AppID | Select-Object -Unique
+        Write-Host "Failed to update AppIDs [$uniqueAppIds]"
+    }else{
+        Write-Host "Catalogue Update [Completed]"
+        $uniqueAppIds = $updatelist.AppID | Select-Object -Unique
+        Write-Host "Updated Catalogue for AppIDs [$uniqueAppIds]"
+    }
+}
+
+#Update the Catalogue with status for each App
+function Update-PhaseTime {
+    param(
+        [Parameter(Mandatory = $true)]
+        $AccessToken,
+        [Parameter(Mandatory = $true)]
+        $Time,
+        [Parameter(Mandatory = $true)]
+        $Phase_Field,
+        [Parameter(Mandatory = $true)]
+        $AppID
+    )
+
+    ###########################################################
+    # Headers and URO for updating the Apps status in catlogue
+    ###########################################################
+    $headers = @{
+        "accept"        = "application/json"
+        "Authorization" = "Bearer $AccessToken"
+        "Content-Type" = "application/json"
+    }
+    #URL to create a new App ID.
+    $uri = "$($env:APP_CATALOGUE_BASE_URL)/applications/bulk-update"
+
+    Write-Host "Updating Catalogue for $Phase_Field : $Time" 
+    
+    # Build the updates object
+    $updates = @{
+        $Phase_Field = $Time
+    }
+
+    # Build the inner object
+    $dataload = [PSCustomObject]@{
+        AppID   = $AppID.ToString()
+        updates = $updates
+    }
+
+    # Wrap in array
+    $data = @($dataload)
+
+    # Wrap in final payload object
+    $payload = @{
+        data = $data
+    }
+
+    # Convert to JSON
+    $payloadJson = $payload | ConvertTo-Json -Depth 10
+
+    $status = Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -Body $payloadJson 
+    #Check if the App ID has been added to the Catalogue
+    if($status.failed_count -gt 0 ){
+        Write-Host "Catalogue Update [Failed]"
+        Write-Host "Failed to update AppIDs [$AppID]"
+    }else{
+        Write-Host "Catalogue Update [Completed]"
+        Write-Host "Updated Catalogue for AppIDs [$AppID]"
     }
 }

@@ -73,6 +73,17 @@ catch{
     Update-CatlogueStatus -AccessToken $token -Apps "All" -InputFilePath $AppsPrepareListFilePath  -Reason "IAF - Set App Supersedence Failed"
     Write-Output "PS_ERROR_DESC= $_"
     exit 1
+
+}
+
+try{
+    $connectMSIntune = Connect-MSIntuneGraph -TenantID $TenantID -ClientID $ClientID -ClientSecret $ClientSecret -ErrorAction "Stop"
+}
+catch{
+    $token = Get-CatalogueAccessToken -username $env:APP_CATALOGUE_USERNAME -password $env:APP_CATALOGUE_SECRET #Created token for catalogue entry
+    Update-CatlogueStatus -AccessToken $token -Apps "All" -InputFilePath $AppsPrepareListFilePath  -Reason "IAF - Set App Supersedence Failed"
+    Write-Output "PS_ERROR_DESC= $_"
+    exit 1
 }
 
 #Create the app name based on the naming convention
@@ -104,7 +115,13 @@ foreach ($App in $AppsPrepareList) {
         
         #Check for Published status
         $appStatus = $Win32AppResources | Where-Object { $PSItem.displayName -like "$($AppDeployedName)" }
-        Write-Host "[Onboarding Status : $AppDeployedName] --> $($appStatus.publishingState)"     
+        Write-Host "[Onboarding Status : $AppDeployedName] --> $($appStatus.publishingState)"
+
+        if ($appStatus.Count -gt 1){
+            Write-Host "Skipping App $AppDeployedName as more than one occurences present on Intune. "
+            $FailedApps += $App
+            continue
+        } 
            
         #Fetch the second latest version on intune to be superseded
         if($appStatus.publishingState -eq "published") {

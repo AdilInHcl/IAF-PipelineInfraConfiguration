@@ -1,0 +1,95 @@
+def checkVar = "yes"
+def agentName = "prod-agent1" // Replace with your agent label
+def UserName = ''
+def result = [
+    retcode: 0,
+    retStage: "All Stages Completed",
+    retdescription: "Success"
+]
+def errorDesc = "" // Error placeholder
+def psCommand = ""
+
+pipeline { 
+    agent { 
+        label "${agentName}" 
+    } 
+	
+	parameters {
+        // Static default parameter, we can later populate it dynamically in the script.
+        string(name: 'AppName', defaultValue: '', description: 'Enter the app name')
+
+        // Static default parameter, we can later populate it dynamically in the script.
+        string(name: 'IntuneAppID', defaultValue: '', description: 'Enter Intune app id ')
+
+    }
+    environment {  
+        PROD_CLIENT_SECRET = credentials("PROD-CLIENT-SECRET")
+        SMTP_PASSWORD = credentials("iaftu01-Password")
+        SMTP_USERNAME = "iaftu01"
+    } 
+    stages {
+        stage("Initialize and Setup") {
+            steps {
+                script {
+					
+					// Apps Selected 
+					echo "Apps to be deleted!"
+                    
+                    if (!params.AppName?.trim()) {
+                        error("AppName parameter is empty. Build aborted.")
+                    }
+                    if (!params.IntuneAppID?.trim()) {
+                        error("IntuneAppID parameter is empty. Build aborted.")
+                    }
+
+					echo "App Names: ${params.AppName}"
+					echo "App ID: ${params.IntuneAppID}"
+
+                    def cause = currentBuild.getBuildCauses()
+                    UserName = cause.find { it.userName }?.userName
+
+                    echo "${UserName}"
+
+                }
+            }
+        }
+
+        stage('Delete App from the Intune Portal') {
+            when {
+                expression { return checkVar == 'yes' }
+            }
+            steps {
+                script {
+
+                    // Load config JSON
+                    def jsonData = readJSON file: "${env.WORKSPACE}\\configs\\CE1-STD.json"
+                    def ARM_CLIENT_ID  = jsonData.ARM_CLIENT_ID
+                    def ARM_TENANT_ID  = jsonData.ARM_TENANT_ID
+
+
+                    try{
+                        echo "Running IntuneAppDeletion.ps1 script..."
+                        // Execute
+                        dir("PowerShell") {
+                            psCommand = " ./IntuneAppDeletion/IntuneAppDeletion.ps1 -TenantID '${ARM_TENANT_ID}' -ClientID '${ARM_CLIENT_ID}' -ClientSecret '${PROD_CLIENT_SECRET}' -AppName '${params.AppName}' -UserId '${UserName}' -IntuneAppID '${params.IntuneAppID}' | Out-String"
+                            def scriptOutput = powershell(returnStdout: true, script: psCommand).trim()                           
+                            //Check for PowerShell error marker
+                            if (scriptOutput.contains("PS_ERROR_DESC=")) {
+                                errorDesc = scriptOutput.split("PS_ERROR_DESC=")[1].trim()
+                                result.retdescription = "${errorDesc}"
+                                error("${result.retdescription}")
+                            }
+                        }
+                    }catch (Exception ex) {
+                        result.retcode = 1
+                        result.retdescription = "${ex.getMessage()}"
+                        result.retStage = "Delete App from the Intune Portal"
+                        error("Result: ${result}")
+                    }
+                }
+            }
+        }
+
+
+    }
+}

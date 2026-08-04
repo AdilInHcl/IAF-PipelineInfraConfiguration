@@ -39,6 +39,8 @@ Process {
     $AppsAssignListFileName = "AppsAssignList.json"
     $AppsAssignListFilePath = Join-Path -Path (Join-Path -Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY -ChildPath "AppsPublishedList") -ChildPath $AppsAssignListFileName
 
+    $token = Get-CatalogueAccessToken -username $env:APP_CATALOGUE_USERNAME -password $env:APP_CATALOGUE_SECRET #Created token for catalogue entry
+
     # Retrieve authentication token using client secret from key vault
     try{
        $AuthToken = Connect-MSIntuneGraph -TenantID $TenantID -ClientID $ClientID -ClientSecret $ClientSecret -ErrorAction "Stop"
@@ -59,8 +61,6 @@ Process {
         $successApps = @()
         foreach ($App in $AppsAssignList) {
             Write-Output -InputObject "[APPLICATION: $($App.IntuneAppName)] - Initializing"
-
-            $token = Get-CatalogueAccessToken -username $env:APP_CATALOGUE_USERNAME -password $env:APP_CATALOGUE_SECRET #Created token for catalogue entry
 
             # Read app specific App.json manifest and convert from JSON
             $AppDataFile = Join-Path -Path $App.AppPublishFolderPath -ChildPath "App.json"
@@ -153,10 +153,6 @@ Process {
                                                 "Intent" = $AppAssignmentItem.Intent
                                                 "ErrorAction" = "Stop"
                                             }
-
-################################################################################ Delete After Test ##################################
-#                                          if ($App.IntuneAppName -eq "Notepad++"){$AppAssignmentArgs.ID = $null}                  #
-################################################################################ Delete After Test ##################################
 
                                             # Add optional part of parameter input data for assignment
                                             if (-not([string]::IsNullOrEmpty($AppAssignmentItem.UseLocalTime))) {

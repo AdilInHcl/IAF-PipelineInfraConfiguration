@@ -65,7 +65,7 @@ pipeline {
                         env.APP_CATALOGUE_BASE_URL = "${imagesettings_CE1.APP_CATALOGUE_BASE_URL}"
 
                         // Citrix related info
-                        env.Dev_CustomerId_CE1 = "${imagesettings_CE1IAT.Dev_CustomerId}"
+                        env.CitrixCustomerId = "${imagesettings_CE1IAT.Dev_CustomerId}"
                         env.PackagingSubscriptionId = "${imagesettings_CE1IAT.packaging_subscriptionid}"
                         env.IATClient_ResourceGroupName_CE1 = "${imagesettings_CE1IAT.iatclient_resourcegroup_name}"
                         env.IATClient_CatalogName_CE1 = "${imagesettings_CE1IAT.IATClient_CatalogName}"
@@ -85,7 +85,7 @@ pipeline {
                     try{               
                         dir("PowerShell") {
                         echo "Run Citrix-Add-Machine-IATClient.ps1"
-                            psCommand = " ./Citrix-Add-Machine-IATClient.ps1 -CitrixCustomerId ${env:Dev_CustomerId_CE1} -citrixClientId ${env:citrixClientId} -CatalogName ${env:IATClient_CatalogName_CE1} -DeliveryGroupName ${env:IATClient_DeliveryGroupName_CE1} -SubscriptionId ${env:PackagingSubscriptionId} -clientId ${env:TF_VAR_client_id} -Tenant ${env:TF_VAR_tenant_id} -resourcegroupname ${env:IATClient_ResourceGroupName_CE1} -CitrixIdpInstanceId ${env:CitrixIdpInstanceId}"
+                            psCommand = " ./Citrix-Add-Machine-IATClient.ps1 -CitrixCustomerId ${env:CitrixCustomerId} -citrixClientId ${env:citrixClientId} -CatalogName ${env:IATClient_CatalogName_CE1} -DeliveryGroupName ${env:IATClient_DeliveryGroupName_CE1} -SubscriptionId ${env:PackagingSubscriptionId} -clientId ${env:TF_VAR_client_id} -Tenant ${env:TF_VAR_tenant_id} -resourcegroupname ${env:IATClient_ResourceGroupName_CE1} -CitrixIdpInstanceId ${env:CitrixIdpInstanceId}"
                             def createVms = runPsWithCreds([[id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'CLIENT_SECRET'],
                                                             [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
                                                             [id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
@@ -94,7 +94,7 @@ pipeline {
 
                         echo "Run Notify-IATUSers.ps1"
                             psCommand = " ./Notify-IATUSers.ps1 | Out-String"
-                            def notifyiatusers = runPsWithCreds([[id: 'LQKAEZU-Password', type: 'pass', passVar: 'SMTP_PASSWORD'],
+                            def notifyiatusers = runPsWithCreds([[id: 'iaftu01-Password', type: 'pass', passVar: 'SMTP_PASSWORD'],
                                                             [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)
                             echo notifyiatusers
                             checkPsError(notifyiatusers, "Create and add Machines in IAT Machine Catalog")

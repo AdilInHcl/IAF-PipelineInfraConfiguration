@@ -1,4 +1,5 @@
 def checkVar = "yes"
+def installationCheck = "pass"
 def agentName = "prod-agent2"
 def psCommand = ""
 def result = [
@@ -54,11 +55,12 @@ pipeline {
         LEScanFolder = "${env.ScanFolder}SmokeTest\\"  //required in notification
         LETestSuiteJsonPath = "${env.LEConfigJsonPath}StageResult\\"
         LETestSuiteJsonFile = "${env.LETestSuiteJsonPath}${params.LETestSuiteJsonFile}"  // output file of testsuite creation pipeline      
-        LESmokeTestResultFile = "${env.JOB_NAME}_${env.BUILD_ID}_SmokeTestExecutionResult.json"  // this is for email
+        //LESmokeTestResultFile = "${env.JOB_NAME}_${env.BUILD_ID}_SmokeTestExecutionResult.json"  // this is for email
+        LESmokeTestResultFile = "SmokeTestExecutionResult.json"  // this is for email
 
-        LE_Test_Re_Run_MaxLimit = 5 
-        Password = credentials("TMU-EU-AVC023")     //this need to be azure vault
-        GIT_PAT = credentials("PROD-NOREPLY-PAT") // Github PAT/Key
+        LE_Test_Re_Run_MaxLimit = 8
+        //Password = credentials("iaftu01-Password")  // Updated: Match script variable name
+        //GIT_PAT = credentials("tu-lmvnqin-GITHUB-PAT") // Github PAT/Key
 
         // //Input coming from IAF piepline
         IAF_JOBNAME = "${params.IAF_JOBNAME}"
@@ -72,6 +74,9 @@ pipeline {
             steps {
                 dir("configs"){
                     script {
+                        def configFile_CE1 = "${BUILD_LOCATION_CE1}-STD.json"
+                        def config_CE1 = readJSON file: configFile_CE1
+
                         def configFile = "${VDI_BUILD_LOCATION_CE2}-STD.json"
                         def config = readJSON file: configFile
 
@@ -89,7 +94,7 @@ pipeline {
                         }
 
                         // Assign to env
-                        env.Citrix_CustomerId         = config.LEcitrixcustomerid
+                        env.CitrixCustomerId         = config.LEcitrixcustomerid
                         env.LEClient_CatalogName      = config.LEClient_CatalogName
                         env.LEClient_DeliveryGroupName= config.LEDelivery_GroupName
                         env.SubscriptionId            = config.LE_subscriptionId
@@ -107,9 +112,10 @@ pipeline {
                         env.LETestVM = config.LETestVM
                         
                         // Set Catalogue Credentials from Config
-                        env.APP_CATALOGUE_USERNAME = config.APP_CATALOGUE_USERNAME  // Changed key name
-                        env.APP_CATALOGUE_BASE_URL = config.AppCatalogueAPIBaseURL
-
+                        env.APP_CATALOGUE_USERNAME = config_CE1.APP_CATALOGUE_USERNAME  // Changed key name
+                        env.APP_CATALOGUE_BASE_URL = config_CE1.APP_CATALOGUE_BASE_URL
+                        env.SMTP_From = config.SMTP_From
+                        env.SMTP_UserName = config.SMTP_UserName
                     }
                 }
                 script{
@@ -143,7 +149,7 @@ pipeline {
                     echo "Running Powershell script to clear Code Integrity Logs"
                     dir("PowerShell") {
                         echo "Turn On Vms if in Power Off state..."
-                            psCommand = ''' ./TurnOn-LEVM.ps1 -CitrixCustomerId ${env:Citrix_CustomerId} -citrixClientId ${env:citrixClientId} '''
+                            psCommand = ''' ./TurnOn-LEVM.ps1 -CitrixCustomerId ${env:CitrixCustomerId} -citrixClientId ${env:citrixClientId} '''
                             def turnonvm = runPsWithCreds([[id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psCommand)
                             echo turnonvm
                             checkPsError(turnonvm, "Turn On Vms if in Power Off state")
@@ -176,10 +182,15 @@ pipeline {
 
                         echo "========== Iteration ${currentRun} of ${maxRuns} =========="
                         //echo "[${currentRun}] Running Reboot_LE_SmokeTest_VM.ps1..."
+                        // Sleep for 30 minutes (30 minutes * 60 seconds * 1000 milliseconds)
+                        if(currentRun <= maxRuns){
+                          sleep(time: 10, unit: 'MINUTES') 
+                          echo "Delay complete. Triggering PROD_EXECUTE_LE_TESTSUITE again."
+                        }
                         dir("PowerShell") {
                             
                                 echo "Turn On Vms if in Power Off state..."
-                                psOnCommand = ''' ./TurnOn-LEVM.ps1 -CitrixCustomerId ${env:Citrix_CustomerId} -citrixClientId ${env:citrixClientId} '''
+                                psOnCommand = ''' ./TurnOn-LEVM.ps1 -CitrixCustomerId ${env:CitrixCustomerId} -citrixClientId ${env:citrixClientId} '''
                                 def turnonvm = runPsWithCreds([[id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psOnCommand)
                                 echo turnonvm
                                 checkPsError(turnonvm, "Power On LE VMs")
@@ -206,19 +217,29 @@ pipeline {
                         dir("LoginEnterpriseConfig") {
                             echo "[${currentRun}]  Running PollLEResult.ps1 to fetch executeed Test-Suites status..."
                                 psCommand = """ ./Scripts/PollLEResult_Re_Run.ps1 -LE_Test_Re_Run_MaxLimit ${maxRuns} -LE_Test__CurrentRun ${currentRun} """
-                                def pollResultOutput = runPsWithCreds([[id: 'PROD-SA-SECRET', type: 'pass', passVar: 'PROD_SA_SECRET'],[id: 'PROD-LE-Config-Token', type: 'pass', passVar: 'LE_Config_Token'],
-                                                                    [id: 'PROD-LE-Read-Token', type: 'pass', passVar: 'LE_Read_Token'],[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET']], psCommand)           
+                                def pollResultOutput = runPsWithCreds([[id: 'PROD-SA-SECRET', type: 'pass', passVar: 'PROD_SA_SECRET'],
+                                                            [id: 'PROD-LE-Config-Token', type: 'pass', passVar: 'LE_Config_Token'],
+                                                            [id: 'PROD-LE-Read-Token', type: 'pass', passVar: 'LE_Read_Token'],
+                                                            [id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
+                                                            [id: 'iaftu01-Password', type: 'pass', passVar: 'Password'],
+                                                            [id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT']], psCommand)           
                                 echo pollResultOutput
                                 checkPsError(pollResultOutput, "Poll to fetch executeed Test-Suites status")
-                        }
-                        
+
+                                def psOutput = pollResultOutput.trim()
+                                echo "--------------------------------------------------"
+                                echo "polling script output :"
+                                echo "${psOutput}"
+                                echo "--------------------------------------------------"
+                                // Check if the output matches the condition
+                                if (psOutput.contains("All App Smoke Test Passed")) {
+                                    //error("Condition met: Exiting the loop and proceeding to the next stage.")
+                                    echo "Condition met: Exiting the loop and proceeding to the next stage."
+                                    continueLoop = false // Exit the loop
+                                }
+                        } 
                         currentRun++
-                        // Sleep for 30 minutes (30 minutes * 60 seconds * 1000 milliseconds)
-                        if(currentRun <= maxRuns){
-                          sleep(time: 10, unit: 'MINUTES')
-                        }
-                        // Main script execution
-                        echo "Delay complete. Triggering PROD_EXECUTE_LE_TESTSUITE again."
+                        
                     }
                 }
                 catch(Exception ex) {
@@ -234,20 +255,53 @@ pipeline {
         stage('Verify App Installation on VMs') {
             steps {
                 script {
-                    try {                       
+                    try {  
+                        dir("PowerShell") {
+                            
+                                echo "Turn On Vms if in Power Off state..."
+                                psOnCommand = ''' ./TurnOn-LEVM.ps1 -CitrixCustomerId ${env:CitrixCustomerId} -citrixClientId ${env:citrixClientId} '''
+                                def turnonvm = runPsWithCreds([[id: 'citrixPassword', type: 'pass', passVar: 'citrixPassword']], psOnCommand)
+                                echo turnonvm
+                                checkPsError(turnonvm, "Power On LE VMs")
+                        }
+
+                        sleep(time: 05, unit: 'MINUTES')
+
                         dir("LoginEnterpriseConfig") {
+                                echo "Reboot Vms ..."
+                                psCommand = """ ./Scripts/Reboot_LE_SmokeTest_VM.ps1 -SubscriptionId ${env:SubscriptionId} -ClientId ${env:LE_CLIENT_ID} -TenantId ${env:LE_TENANT_ID} -ResourceGroupName ${env:ResourceGroupName} """
+                                def rebootLEVM = runPsWithCreds([[id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'PROD_CLIENT_SECRET_LE']], psCommand)
+                                echo rebootLEVM
+                                checkPsError(rebootLEVM, "Reboot LE VMs")
+                        } 
+                        sleep(time: 05, unit: 'MINUTES')
+
+                        def verificationOutput = ""                    
+                        dir("LoginEnterpriseConfig") {    
                             echo "Verifying app installation on VMs remotely..."
                             psCommand = ''' ./Scripts/Verify-AppInstallation-OnVM.ps1 -SubscriptionId ${env:SubscriptionId} -ClientId ${env:LE_CLIENT_ID} -TenantId ${env:LE_TENANT_ID} -ResourceGroupName ${env:ResourceGroupName} '''
-                            def verificationOutput = runPsWithCreds( [[id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'PROD_CLIENT_SECRET_LE']], psCommand)
+                            verificationOutput = runPsWithCreds( [[id: 'PROD-AZ-SECRET', type: 'pass', passVar: 'PROD_CLIENT_SECRET_LE']], psCommand)
                             echo verificationOutput
                             checkPsError(verificationOutput, "Verify App Installation on VMs")
-
-                            if (verificationOutput.contains("No Apps were installed")) {
-                                ///// Any Logic ////
-                                checkVar = 'no'
-                            }
                         }
-                        
+
+                        if (verificationOutput.contains("No Apps were installed")) {
+                            ///// Set checkvar to 'no' for no apps installations on any of the VMs ////
+                            checkVar = 'no'
+                            
+                            // Send final Email
+                            dir("PowerShell"){
+                                psCommand = ''' ./Send-FinalEmail-Notification.ps1 ''' 
+                                def sendEmailOutput = runPsWithCreds([[id: 'PROD-App-Catalogue-API', type: 'pass', passVar: 'APP_CATALOGUE_SECRET'],
+                                [id: 'iaftu01-Password', type: 'pass', passVar: 'Password'],
+                                [id: 'tu-lmvnqin-GITHUB-PAT', type: 'userpass', userVar: 'GIT_USER', passVar: 'GIT_PAT']], psCommand)
+                                echo sendEmailOutput
+                                checkPsError(sendEmailOutput, "Send Combined Email notification")
+                            }
+                            // Stop Pipeline with failure reason
+                            error("No Apps were installed on any of the VMs")
+
+                        }
                         echo "App installation verification completed"
                         
                     } catch(Exception ex) {
@@ -268,7 +322,7 @@ pipeline {
                     try{
                         // Use the filtered SecurityScan_Input.json instead of original smoke test result
                         build job: 'SCAN_LE_SMOKETEST_VM',
-                            wait: false,
+                            wait: true,
                             parameters: [
                                 string(name: 'LE_SmokeTestResult', value: env.LESmokeTestResultFile),
                                 string(name: 'IAF_JOBNAME', value: env.IAF_JOBNAME),
@@ -283,7 +337,7 @@ pipeline {
                     }
                 }
             }
-        }       
+        }      
     }
 }
 

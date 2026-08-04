@@ -24,6 +24,7 @@ param(
     [string]$CitrixIdpInstanceId
 )
 Import-Module Az.Accounts
+Import-Module "$($env:WORKSPACE)/Scripts/CitrixConnect.psm1"
 Set-ExecutionPolicy Bypass -Scope Process -Force
 asnp citrix.*
 
@@ -46,6 +47,7 @@ foreach ($App in $IATVMCreationData.Apps) {
         $VMinfo = [PSCustomObject]@{
             User = $user
             Device = $null
+            Status = $null
             IntuneAppName = $App.IntuneAppName
             AppID = $App.AppID
         }
@@ -61,11 +63,7 @@ $VDICount = @($vmEmailMap).Count
 #                                    Login to Citrix
 ##########################################################################################################
 try {
-    # Connect to Citrix Cloud
-    Set-XDCredentials -CustomerId $CitrixCustomerId -APIKey $citrixClientId -SecretKey $citrixPassword -ProfileType CloudApi #-StoreAs "CitrixEUConnection" -Verbose
-    Write-Host "Credentials Set.."
-    Get-XDAuthentication #-ProfileName "CitrixEUConnection" -Verbose
-    Write-Host "Successfully logged in to the Citrix Cloud"
+    Connect-Citrix
 }
 catch{
     Write-Output "PS_ERROR_DESC= Failed to Connect to Citrix Error: $_"
@@ -136,8 +134,8 @@ catch{
 
 
 #Giving 1 Minute sleep time to sync the machines' power state with Studio and PowerON the machine.
-Write-Host "1 Minute Sleep time to let machines sync their power states with Citrix DaaS"
-Start-Sleep -Seconds 60
+Write-Host "Wait for machines to sync their power states with Citrix DaaS"
+Start-Sleep -Seconds 120
 
 #Turning ON the VMs
 Write-Host "Turning ON the newly created Machines..."
@@ -152,17 +150,17 @@ Write-Host "Vms Turned On... [$($ProvVMS.VMName)]"
 Write-Host "Assigning Users to the VDIs based on the Email Addresses Provided..."
 
 #Assigning VDIs to the Users
-$machines = $ProvVMS.VMName
+$machines = @($ProvVMS.VMName)
 Write-Host "VMs Provisioned:"
 Write-Host $machines
 
 # Regex for matching a GUID (used for OID)
 $guidRegex = '[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}'
 
-# Validate count matches
-if (@($machines).Count -ne $VDICount) {
-    throw "Mismatch in email and VDI count. Emails: $($emailList.Count), VDIs: $VDICount"
-}
+# # Validate count matches
+# if (@($machines).Count -ne $VDICount) {
+#     throw "Mismatch in email and VDI count. Emails: $($emailList.Count), VDIs: $VDICount"
+# }
 
 # Loop through VMs and emails
 for ($i = 0; $i -lt $VDICount; $i++) {
@@ -180,16 +178,20 @@ for ($i = 0; $i -lt $VDICount; $i++) {
             $userClaim = "AzureAD:$CitrixIdpInstanceId\$Tenant\$PrimaryClaim"
             Add-BrokerUser -Name $userClaim -PrivateDesktop $machine -ErrorAction Stop
             $vmEmailMap[$i].Device = $machine
+            $vmEmailMap[$i].Status = "Assigned"
             Write-Host "Assigned: $userEmail to $machine with OID $PrimaryClaim"
         }
         else {
             Write-Warning "Skipping user $userEmail - Could not extract OID from PrimaryClaim: $PrimaryClaimRaw"
-            exit 1
+            $vmEmailMap[$i].Device = $machine
+            $vmEmailMap[$i].Status = "Failed"
+            
         }
     }
     catch {
         Write-Output "PS_ERROR_DESC= Failed to assign $userEmail to $machine - $_"
-        exit 1
+        $vmEmailMap[$i].Device = $machine
+        $vmEmailMap[$i].Status = "Failed"
     }
 }
 
@@ -199,7 +201,7 @@ for ($i = 0; $i -lt $VDICount; $i++) {
 Import-Module Az.Accounts -Force
 # Wait for sync with Azure
 Write-Host "Waiting for Azure sync before tagging..."
-Start-Sleep -Seconds 30
+Start-Sleep -Seconds 60
 
 # Azure login
 $secureKey = ConvertTo-SecureString -String $clientSecret -AsPlainText -Force

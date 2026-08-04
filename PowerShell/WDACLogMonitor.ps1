@@ -53,18 +53,73 @@ function Detect-Errorlogs{
         # VM is running, proceed with the command execution
         $script = @'
 try {
-$events = Get-WinEvent -LogName "Microsoft-Windows-CodeIntegrity/Operational" -ErrorAction SilentlyContinue |
-    Where-Object { $_.Id -eq 3076 }
+    # ---- Configurable filters --------------------------------------------
+    $excludePatterns = @(
+        '\\Packages\\Plugins\\Microsoft\.CPlat\.Core\.',     
+        '\\Packages\\Plugins\\Microsoft\.Azure\.',           
+        '\\Packages\\Plugins\\Microsoft\.GuestConfiguration',
+        '\\WindowsAzure\\GuestAgent',
+        '\\Packages\\Plugins\\Microsoft.CPlat.Core.RunCommandWindows\.',
+        '\\WindowsAzure\\Logs',
+        'WaAppAgent\.exe',
+        'WindowsAzureGuestAgent\.exe',
+        'RunCommandExtension\.exe',
+        'CollectGuestLogs\.exe',
+        '\\MonitoringAgent\\',
+        '\\AzureMonitorAgent\\',
+        '\\GuestConfig\\',
+        'Newtonsoft\.Json\.dll',
 
-if ($events) {
-    $events
-    Write-Host "WDAC_Logs: $events"
-    
-} else {
-    Write-Host "PS_ERROR_DESC: No matching events found"
-}
+        # LoginPI
+        '\\Temp\\LoginPI\\',
+        'LoginPI\.Engine\.exe',
+        'FlaUI\.Core\.dll'
+    )
+
+    # Login Enterprise launches apps as a real user, not SYSTEM
+    $onlyInteractiveUser = $true
+    $systemSids = @('S-1-5-18','S-1-5-19','S-1-5-20')
+
+    $allEvents = Get-WinEvent -LogName "Microsoft-Windows-CodeIntegrity/Operational" -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Id -eq 3076 }
+
+    if (-not $allEvents) {
+        Write-Host "PS_ERROR_DESC: No matching events found"
+        return
+    }
+
+    $appEvents = foreach ($ev in $allEvents) {
+        if ($onlyInteractiveUser -and $ev.UserId -and ($systemSids -contains $ev.UserId.Value)) {
+            continue
+        }
+        $skip = $false
+        foreach ($pat in $excludePatterns) {
+            if ($ev.Message -match $pat) { $skip = $true; break }
+        }
+        if (-not $skip) { $ev }
+    }
+
+    if (-not $appEvents -or $appEvents.Count -eq 0) {
+        Write-Host "PS_ERROR_DESC: No matching events found"
+        return
+    }
+
+    $appEvents
+    Write-Host "WDAC_Logs: $appEvents"
+
+    $vmName = hostname
+    if (-not (Test-Path 'C:\Temp')) { New-Item -Path 'C:\Temp' -ItemType Directory -Force | Out-Null }
+    wevtutil epl "Microsoft-Windows-CodeIntegrity/Operational" `
+        "C:\Temp\$($vmName)_CI_3076.evtx" /q:"*[System[(EventID=3076)]]" /ow:true
+
+    $appEvents |
+        Select-Object TimeCreated, Id, MachineName,
+                      @{n='User';e={$_.UserId}},
+                      @{n='Message';e={$_.Message -replace '\s+',' '}} |
+        Export-Csv -Path "C:\Temp\$($vmName)_CI_3076_filtered.csv" -NoTypeInformation -Force
+
 } catch {
-    Write-Host "PS_ERROR_DESC: Failed to detect WDAC Logs due to unexpected error :" + $_.Exception.Message
+    Write-Host ("PS_ERROR_DESC: Failed to detect WDAC Logs due to unexpected error : " + $_.Exception.Message)
 }
 '@
         try {
@@ -113,6 +168,7 @@ function Get-AzVMRunCommand-Response{
     }
     return $result 
 }
+
 #Function to generate WDAC Base Policy Event Log XML File
 function Generate-BasePolicy-XML{
     param(
@@ -170,7 +226,7 @@ catch {
 }
 
 }
-# command to convert Base policy to SupplymentBase policy
+
 function Convert-BasePolicy-To-SupplymentBasePolicy{
     param(
         [string] $rgName,
@@ -389,7 +445,6 @@ $GitHubToken = "@GitHubToken@"
         "Authorization" = "Bearer $GitHubToken"
         "Accept"        = "application/vnd.github.v3+json"
     }
-    Write-Host $GitHubToken
     # --- 1. Check if folder exists ---
     try {
         # Try to get the folder content
@@ -491,6 +546,8 @@ try{
 }
 
 }
+
+
 $VMInfoFileName = $env:Input_File_name
 $jsonFilePath = Join-Path -Path $env:BUILD_BINARIESDIRECTORY -ChildPath $VMInfoFileName
 Write-Host "Json File Path is :- "$jsonFilePath
@@ -587,13 +644,28 @@ try {
                 #Local XML file path to upload on Github
                 $FileName = "${AppId}_${AppName}.xml"
                 $LocalFile = "C:\Temp\$FileName"
-                #$LocalFile   = 
+                
+                #Local evtx file path to upload on Github
+                $evtxFilename = "$($VmName)_CI_3076.evtx"
+                $evtxLocalFile = "C:\Temp\$evtxFilename"
+
                 Write-Host "File path with updated FriendlyName $LocalFile"
                 SaveFile_On_GitGub -rgName $resourceGroupName -vmName $VmName -Owner $Owner -Repo $Repo -Branch $Branch -FolderPath $FolderPath -LocalFile $LocalFile -AppID $AppId -AppName $AppName
+
+                Write-Host "Event Viewer 3076 log File path: $evtxLocalFile"
+                SaveFile_On_GitGub -rgName $resourceGroupName -vmName $VmName -Owner $Owner -Repo $Repo -Branch $Branch -FolderPath $FolderPath -LocalFile $evtxLocalFile -AppID $AppId -AppName $AppName
+
+                #Description for email
+                $GitHubRepoURL = "https://github.developer.allianz.io/api/v3/repos"
+                $GithubRepoUIURL = "https://github.developer.allianz.io"
+                $AppFolderPath = "${AppId}_${AppName}"
+                $responseMessage ="WDAC Report Path : $($GithubRepoUIURL)/$($Owner)/$($Repo)/tree/main/$($FolderPath)/$($AppFolderPath)"
+
                 $currentResult.WDACScanStatus    = "Completed"
                 $currentResult.WDACScanResult    = "Failed"
-                $currentResult.Description= $eventMessage
-                $currentResult.WDACScanReport="NA"
+                $currentResult.Description = $responseMessage 
+                $FilePath = "$FolderPath/${AppId}_${AppName}/$FileName"
+                $currentResult.WDACScanReport= $FilePath
                 $app | Add-Member -NotePropertyName "WDACScan" -NotePropertyValue "Failed" -Force
 
             }   
